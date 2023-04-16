@@ -2,7 +2,6 @@ use typst::doc::Frame;
 use eframe::{egui, epaint::FontFamily};
 use typst::doc::FrameItem::{Text, Group};
 use eframe::egui::{FontDefinitions, FontData};
-use std::path::PathBuf;
 
 mod shapes;
 mod text;
@@ -14,7 +13,7 @@ struct MyApp {
     display: bool,
 }
 
-pub(crate) fn run(title: &str, page: Frame, _font: PathBuf) {
+pub(crate) fn run(page: Frame) {
 
     let x = page.width().to_pt() as f32;
     let y = page.height().to_pt() as f32;
@@ -26,7 +25,7 @@ pub(crate) fn run(title: &str, page: Frame, _font: PathBuf) {
         ..Default::default()
     };
     eframe::run_native(
-        title,
+        "litter typer",
         options,
         Box::new(|cc| {
             let mut defs = FontDefinitions::default();

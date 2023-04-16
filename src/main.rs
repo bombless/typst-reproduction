@@ -317,11 +317,11 @@ fn render(command: CompileSettings) -> StrResult<()> {
     let mut world = SystemWorld::new(root, &command.font_paths);
     world.reset();
     world.main = world.resolve(&command.input).map_err(|err| err.to_string()).unwrap();
-    let doc = typst::compile(&mut world).unwrap();
+    let mut doc = typst::compile(&mut world).unwrap();
 
     println!("{} pages in total", doc.pages.len());
 
-    gui::run(&format!("{:?}", doc.title), doc.pages[0].clone(), world.fonts[0].path.clone());
+    gui::run(doc.pages.remove(0));
 
     Ok(())
 }
