@@ -62,11 +62,12 @@ impl eframe::App for MyApp {
         egui::CentralPanel::default().frame(options).show(ctx, |ui| {
 
             if ui.button("Open file…").clicked() {
-                if let Some(path) = FileDialog::new().pick_file() {
+                if let Some(path) = FileDialog::new().add_filter("typst source file", &["typ"]).pick_file() {
                     let page = (self.renderer.borrow_mut())(path);
                     super::collect_font_from_frame(&mut self.font_definitions, &page);
                     ctx.set_fonts(self.font_definitions.clone());
                     self.page = Some(page);
+                    return; // wait until next frame
                 }
             }
 
