@@ -301,27 +301,31 @@ fn compile_once(world: &mut SystemWorld, command: &CompileSettings) -> StrResult
 }
 
 fn render(command: CompileSettings) -> StrResult<()> {
-    let root = if let Some(root) = &command.root {
-        root.clone()
-    } else if let Some(dir) = command
-        .input
-        .canonicalize()
-        .ok()
-        .as_ref()
-        .and_then(|path| path.parent())
-    {
-        dir.into()
-    } else {
-        PathBuf::new()
+    let path = if command.input == Path::new("-") { None } else { Some(command.input.to_path_buf()) };
+
+    
+
+    let mut proxy = |path: PathBuf| {
+        let root = if let Some(root) = &command.root {
+            root.clone()
+        } else if let Some(dir) = command
+            .input
+            .canonicalize()
+            .ok()
+            .as_ref()
+            .and_then(|path| path.parent())
+        {
+            dir.into()
+        } else {
+            PathBuf::new()
+        };
+        let mut world = SystemWorld::new(root, &command.font_paths);
+        world.reset();
+        world.main = world.resolve(path.as_path()).map_err(|err| err.to_string()).unwrap();
+        typst::compile(&mut world).unwrap().pages.remove(0)
     };
-    let mut world = SystemWorld::new(root, &command.font_paths);
-    world.reset();
-    world.main = world.resolve(&command.input).map_err(|err| err.to_string()).unwrap();
-    let mut doc = typst::compile(&mut world).unwrap();
 
-    println!("{} pages in total", doc.pages.len());
-
-    gui::run(doc.pages.remove(0));
+    gui::run(path, &mut proxy);
 
     Ok(())
 }

@@ -59,8 +59,10 @@ impl eframe::App for MyApp {
         };
 
         egui::CentralPanel::default().frame(options).show(ctx, |ui| {
-            render_frame(ui, &self.page, Point::default(), self.display);
-            self.display = false;
+            if let Some(page) = &self.page {
+                render_frame(ui, page, Point::default(), self.display);
+                self.display = false;
+            }
         });
         
     }
