@@ -9,7 +9,7 @@ use typst::doc::{Frame as TypstFrame, TextItem};
 use typst::geom::Point;
 
 
-fn render_text(ui: &mut Ui, text: &TextItem, point: &Point, display: bool) {
+fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
     if display {
         if !text.glyphs.iter().any(|x| x.c.is_whitespace()) {
             println!("render_text {:?}", point);
@@ -38,13 +38,13 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: &Point, display: bool) {
     );
 }
 
-fn render_frame(ui: &mut Ui, frame: &TypstFrame, display: bool) {
-    if display { println!("ascent {:?} descent {:?}", frame.ascent(), frame.descent()); }
-    for (point, item) in frame.items() {
-        // point.y -= frame.baseline();
+fn render_frame(ui: &mut Ui, frame: &TypstFrame, offset: Point, display: bool) {
+    for (mut point, item) in frame.items() {
+        if display { println!("{:?}", point); }
+        point += offset;
         match item {
-            Text(text) => render_text(ui, text, &point, display),
-            Group(group) => render_frame(ui, &group.frame, display),
+            Text(text) => render_text(ui, text, point, display),
+            Group(group) => render_frame(ui, &group.frame, point, display),
             _ => (),
         }
     }
@@ -59,7 +59,7 @@ impl eframe::App for MyApp {
         };
 
         egui::CentralPanel::default().frame(options).show(ctx, |ui| {
-            render_frame(ui, &self.page, self.display);
+            render_frame(ui, &self.page, Point::default(), self.display);
             self.display = false;
         });
         
