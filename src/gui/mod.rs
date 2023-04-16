@@ -3,21 +3,23 @@ use eframe::{egui, epaint::FontFamily};
 use typst::doc::FrameItem::{Text, Group};
 use eframe::egui::{FontDefinitions, FontData};
 use std::path::PathBuf;
+use std::rc::Rc;
+use std::cell::RefCell;
 
 mod shapes;
 mod text;
 mod update;
 
-#[derive(Default)]
 struct MyApp {
     page: Option<Frame>,
+    renderer: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>,
     display: bool,
 }
 
-pub(crate) fn run(file: Option<PathBuf>, open: &mut dyn for<'a> FnMut(PathBuf) -> Frame) {
+pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>) {
     let mut options = eframe::NativeOptions::default();
 
-    let page = file.map(open);
+    let page = file.map(|x| open.borrow_mut()(x));
     let mut defs = FontDefinitions::default();
 
     if let Some(page) = &page {
@@ -32,10 +34,10 @@ pub(crate) fn run(file: Option<PathBuf>, open: &mut dyn for<'a> FnMut(PathBuf) -
     eframe::run_native(
         "litter typer",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             
             cc.egui_ctx.set_fonts(defs);
-            Box::new(MyApp { page, display: true })
+            Box::new(MyApp { page, renderer: open, display: true })
         }),
     ).unwrap()
 }

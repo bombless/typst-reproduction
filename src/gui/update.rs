@@ -7,6 +7,7 @@ use egui::containers::Frame;
 use typst::doc::FrameItem::{Text, Group};
 use typst::doc::{Frame as TypstFrame, TextItem};
 use typst::geom::Point;
+use rfd::FileDialog;
 
 
 fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
@@ -59,6 +60,13 @@ impl eframe::App for MyApp {
         };
 
         egui::CentralPanel::default().frame(options).show(ctx, |ui| {
+
+            if ui.button("Open file…").clicked() {
+                if let Some(path) = FileDialog::new().pick_file() {
+                    self.page = Some((self.renderer.borrow_mut())(path));
+                }
+            }
+
             if let Some(page) = &self.page {
                 render_frame(ui, page, Point::default(), self.display);
                 self.display = false;

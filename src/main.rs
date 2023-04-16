@@ -24,6 +24,7 @@ use typst::syntax::{Source, SourceId};
 use typst::util::{Buffer, PathExt};
 use typst::World;
 use walkdir::WalkDir;
+use std::rc::Rc;
 
 mod gui;
 
@@ -303,13 +304,13 @@ fn compile_once(world: &mut SystemWorld, command: &CompileSettings) -> StrResult
 fn render(command: CompileSettings) -> StrResult<()> {
     let path = if command.input == Path::new("-") { None } else { Some(command.input.to_path_buf()) };
 
-    
+    let root = command.root.clone();
+    let font_paths = command.font_paths.clone();
 
-    let mut proxy = |path: PathBuf| {
-        let root = if let Some(root) = &command.root {
+    let proxy = move |path: PathBuf| {
+        let root = if let Some(root) = &root {
             root.clone()
-        } else if let Some(dir) = command
-            .input
+        } else if let Some(dir) = path
             .canonicalize()
             .ok()
             .as_ref()
@@ -319,13 +320,13 @@ fn render(command: CompileSettings) -> StrResult<()> {
         } else {
             PathBuf::new()
         };
-        let mut world = SystemWorld::new(root, &command.font_paths);
+        let mut world = SystemWorld::new(root, &font_paths);
         world.reset();
         world.main = world.resolve(path.as_path()).map_err(|err| err.to_string()).unwrap();
         typst::compile(&mut world).unwrap().pages.remove(0)
     };
 
-    gui::run(path, &mut proxy);
+    gui::run(path, Rc::new(RefCell::new(proxy)));
 
     Ok(())
 }
