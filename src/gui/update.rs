@@ -63,7 +63,10 @@ impl eframe::App for MyApp {
 
             if ui.button("Open file…").clicked() {
                 if let Some(path) = FileDialog::new().pick_file() {
-                    self.page = Some((self.renderer.borrow_mut())(path));
+                    let page = (self.renderer.borrow_mut())(path);
+                    super::collect_font_from_frame(&mut self.font_definitions, &page);
+                    ctx.set_fonts(self.font_definitions.clone());
+                    self.page = Some(page);
                 }
             }
 

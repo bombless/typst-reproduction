@@ -14,6 +14,7 @@ struct MyApp {
     page: Option<Frame>,
     renderer: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>,
     display: bool,
+    font_definitions: FontDefinitions,
 }
 
 pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>) {
@@ -36,18 +37,19 @@ pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> 
         options,
         Box::new(move |cc| {
             
-            cc.egui_ctx.set_fonts(defs);
-            Box::new(MyApp { page, renderer: open, display: true })
+            cc.egui_ctx.set_fonts(defs.clone());
+            Box::new(MyApp { page, renderer: open, font_definitions: defs, display: true })
         }),
     ).unwrap()
 }
 
-fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame) {
+pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame) {
     for (_, item) in frame.items() {
         match item {
             Text(text) => {
                 let font_ptr = unsafe { std::mem::transmute::<_, usize>(text.font.data()) };
                 let font_name = format!("font-{}", font_ptr);
+                println!("font {}", font_name);
                 if !defs.font_data.contains_key(&font_name) {
                     defs.font_data.insert(font_name.clone(), FontData::from_owned(text.font.data().to_vec()));
                     defs.families.insert(FontFamily::Name(font_name.clone().into()), vec![font_name.clone()]);
