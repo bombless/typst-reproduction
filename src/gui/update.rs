@@ -7,6 +7,7 @@ use egui::containers::Frame;
 use typst::doc::FrameItem::{Text, Group};
 use typst::doc::{Frame as TypstFrame, TextItem};
 use typst::geom::Point;
+#[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
 
 
@@ -62,6 +63,7 @@ impl eframe::App for MyApp {
         egui::CentralPanel::default().frame(options).show(ctx, |ui| {
 
             if ui.button("Open file…").clicked() {
+                #[cfg(not(target_arch = "wasm32"))]
                 if let Some(path) = FileDialog::new().add_filter("typst source file", &["typ"]).pick_file() {
                     let page = (self.renderer.borrow_mut())(path);
                     super::collect_font_from_frame(&mut self.font_definitions, &page);

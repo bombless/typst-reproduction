@@ -5,9 +5,19 @@ edition = "2021"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
+[[bin]]
+name = "main"
+path = "src/main.rs"
+
+[lib]
+path = "src/main.rs"
+
+
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+clap = { version = "4.2.1", features = ["derive"] }
+
 [dependencies]
 chrono = "0.4.24"
-clap = { version = "4.2.1", features = ["derive"] }
 codespan-reporting = "0.11.1"
 comemo = "0.2.0"
 dirs = "5.0.0"
@@ -20,5 +30,8 @@ siphasher = "0.3.10"
 typst = { git = "https://github.com/typst/typst", rev = "9414d5" }
 typst-library = { git = "https://github.com/typst/typst", rev = "9414d5" }
 walkdir = "2.3.3"
-eframe = "0.21.3"
+#eframe = "0.21.3"
+eframe = { path = "../egui-src/crates/eframe" }
+
 rfd = "0.11.3"
+wasm-bindgen-futures = "0.4"

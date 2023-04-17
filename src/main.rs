@@ -6,6 +6,7 @@ use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process;
 
+#[cfg(not(target_arch = "wasm32"))]
 use clap::{ArgAction, Parser, Subcommand};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
 use codespan_reporting::term::{self, termcolor};
@@ -34,6 +35,7 @@ type CodespanError = codespan_reporting::files::Error;
 const TYPST_VERSION: &str = "0.1";
 
 /// typst creates PDF files from .typ files
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Parser)]
 #[clap(name = "typst", version = TYPST_VERSION, author)]
 pub struct CliArguments {
@@ -51,6 +53,7 @@ pub struct CliArguments {
 }
 
 /// What to do.
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Subcommand)]
 #[command()]
 enum Command {
@@ -68,6 +71,7 @@ enum Command {
 }
 
 /// Renders the input file
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Parser)]
 pub struct RenderCommand {
     /// Path to input Typst file
@@ -75,6 +79,7 @@ pub struct RenderCommand {
 }
 
 /// Compiles the input file into a PDF file
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Parser)]
 pub struct CompileCommand {
     /// Path to input Typst file
@@ -85,6 +90,7 @@ pub struct CompileCommand {
 }
 
 /// Watches the input file and recompiles on changes
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Parser)]
 pub struct WatchCommand {
     /// Path to input Typst file
@@ -95,6 +101,7 @@ pub struct WatchCommand {
 }
 
 /// List all discovered fonts in system and custom font paths
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Parser)]
 pub struct FontsCommand {
     /// Add additional directories to search for fonts
@@ -141,6 +148,7 @@ impl CompileSettings {
     ///
     /// # Panics
     /// Panics if the command is not a compile or watch command.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_arguments(args: CliArguments) -> Self {
         let (input, output, watch) = match args.command {
             Command::Render(command) => (command.input, None, false),
@@ -170,6 +178,7 @@ impl FontsSettings {
     ///
     /// # Panics
     /// Panics if the command is not a fonts command.
+    #[cfg(not(target_arch = "wasm32"))]
     pub fn with_arguments(args: CliArguments) -> Self {
         match args.command {
             Command::Fonts(command) => Self::new(args.font_paths, command.variants),
@@ -179,7 +188,8 @@ impl FontsSettings {
 }
 
 /// Entry point.
-fn main() {
+#[cfg(not(target_arch = "wasm32"))]
+pub fn main() {
     let arguments = CliArguments::parse();
 
     let res = match &arguments.command {
@@ -193,6 +203,10 @@ fn main() {
     if let Err(msg) = res {
         print_error(&msg).expect("failed to print error");
     }
+}
+#[cfg(target_arch = "wasm32")]
+pub fn main() {
+    render();
 }
 
 /// Print an application-level error (independent from a source file).
@@ -301,6 +315,7 @@ fn compile_once(world: &mut SystemWorld, command: &CompileSettings) -> StrResult
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 fn render(command: CompileSettings) -> StrResult<()> {
     let path = if command.input == Path::new("-") { None } else { Some(command.input.to_path_buf()) };
 
@@ -327,6 +342,29 @@ fn render(command: CompileSettings) -> StrResult<()> {
     };
 
     gui::run(path, Rc::new(RefCell::new(proxy)));
+
+    Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn render() -> StrResult<()> {
+    let proxy = move |path: PathBuf| {
+        if let Some(dir) = path
+            .canonicalize()
+            .ok()
+            .as_ref()
+            .and_then(|path| path.parent())
+        {
+            dir.into()
+        } else {
+            PathBuf::new()
+        };
+        let mut world = SystemWorld::new("".into(), &[]);
+        world.reset();
+        world.main = world.resolve(path.as_path()).map_err(|err| err.to_string()).unwrap();
+        typst::compile(&mut world).unwrap().pages.remove(0)
+    };
+    gui::run(None, Rc::new(RefCell::new(proxy)));
 
     Ok(())
 }
@@ -699,6 +737,9 @@ impl FontSearcher {
             self.search_dir(dir);
         }
     }
+
+    #[cfg(target_arch = "wasm32")]
+    fn search_system(&mut self) { }
 
     /// Search for fonts in the macOS system font directories.
     #[cfg(target_os = "macos")]

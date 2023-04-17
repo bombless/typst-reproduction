@@ -17,6 +17,7 @@ struct MyApp {
     font_definitions: FontDefinitions,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>) {
     let mut options = eframe::NativeOptions::default();
 
@@ -41,6 +42,25 @@ pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> 
             Box::new(MyApp { page, renderer: open, font_definitions: defs, display: true })
         }),
     ).unwrap()
+}
+
+
+// when compiling to web using trunk.
+#[cfg(target_arch = "wasm32")]
+pub(crate) fn run(_file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>) {
+    let mut defs = FontDefinitions::default();
+    
+    let web_options = eframe::WebOptions::default();
+
+    wasm_bindgen_futures::spawn_local(async {
+        eframe::start_web(
+            "the_canvas_id", // hardcode it
+            web_options,
+            Box::new(|cc| Box::new(MyApp { page: None, renderer: open, font_definitions: defs, display: true })),
+        )
+        .await
+        .expect("failed to start eframe");
+    });
 }
 
 pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame) {
