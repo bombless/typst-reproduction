@@ -21,6 +21,7 @@ use termcolor::{ColorChoice, StandardStream, WriteColor};
 use typst::diag::{FileError, FileResult, SourceError, StrResult};
 use typst::eval::Library;
 use typst::font::{Font, FontBook, FontInfo, FontVariant};
+use typst::geom::Abs;
 use typst::syntax::{Source, SourceId};
 use typst::util::{Buffer, PathExt};
 use typst::World;
@@ -335,20 +336,30 @@ impl Renderer {
         let world = SystemWorld::new(root, font_paths);
         Self { world }
     }
+    fn compile(&mut self, source: SourceId) -> typst::doc::Frame {
+        self.world.main = source;
+        let mut pages = match typst::compile(&mut self.world) {
+            Ok(x) => x.pages,
+            Err(e) => {
+                tracing::error!("{:?}", e);
+                eprintln!("{:?}", e);
+                return typst::doc::Frame::new(typst::geom::Axes { x: Abs::pt(300.), y: Abs::pt(300.) });}
+        };
+        tracing::debug!("{} pages", pages.len());
+        pages.remove(0)
+    }
     fn render_from_path<'a>(&mut self, path: &Path) -> typst::doc::Frame {
         self.world.reset();
-        self.world.main = self.world.resolve(path).map_err(|err| err.to_string()).unwrap();
-        typst::compile(&mut self.world).unwrap().pages.remove(0)
+        self.compile(self.world.resolve(path).map_err(|err| err.to_string()).unwrap())
     }
     
-    fn render_from_slice(&mut self, slice: &[u8]) -> typst::doc::Frame {
+    fn render_from_vec(&mut self, slice: Vec<u8>) -> typst::doc::Frame {
         self.world.reset();
         let text = String::from_utf8(slice.into()).unwrap();
-        let path = Path::new("-");
+        let path = Path::new("test.typ");
         
         let source = self.world.insert(path, text);
-        self.world.main = source;
-        typst::compile(&mut self.world).unwrap().pages.remove(0)
+        self.compile(source)
     }
 }
 

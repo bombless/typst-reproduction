@@ -25,13 +25,13 @@ notify = "5.1.0"
 once_cell = "1.17.1"
 same-file = "1.0.6"
 siphasher = "0.3.10"
-typst = { git = "https://github.com/typst/typst", rev = "9414d5" }
-typst-library = { git = "https://github.com/typst/typst", rev = "9414d5" }
+# typst = { git = "https://github.com/typst/typst", rev = "9414d5" }
+typst = { path = "../typst" }
+# typst-library = { git = "https://github.com/typst/typst", rev = "9414d5" }
+typst-library = { path = "../typst/library" }
 walkdir = "2.3.3"
 #eframe = "0.21.3"
 eframe = { path = "../egui-src/crates/eframe" }
-
-rfd = "0.11.3"
 wasm-bindgen-futures = "0.4"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]

@@ -1,23 +1,26 @@
 use super::text::Text as _;
+use super::shapes::Shapes as _;
 use super::{MyApp, collect_font_from_frame};
 use eframe::egui;
 use egui::{Color32, FontFamily, Ui};
 use typst::geom::Paint::Solid;
 use egui::containers::Frame;
 use egui::DroppedFile;
-use typst::doc::FrameItem::{Text, Group};
+use typst::doc::FrameItem::{Text, Group, Shape, Image, Meta};
+use typst::geom::Geometry::Line;
+use typst::geom;
 use typst::doc::{Frame as TypstFrame, TextItem};
 use typst::geom::Point;
-#[cfg(not(target_arch = "wasm32"))]
-use rfd::FileDialog;
 
 
 fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
     if display {
         if !text.glyphs.iter().any(|x| x.c.is_whitespace()) {
             println!("render_text {:?}", point);
+            tracing::debug!("render_text {:?}", point);
             for x in &text.glyphs {
                 print!("{:?},", x.c);
+                tracing::debug!("{:?},", x.c);
             }
             println!();
         }
@@ -41,39 +44,69 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
     );
 }
 
-fn render_frame(ui: &mut Ui, frame: &TypstFrame, offset: Point, display: bool) {
-    for (mut point, item) in frame.items() {
-        if display { println!("{:?}", point); }
-        point += offset;
+fn render_frame(ui: &mut Ui, frame: &TypstFrame, offset: Point, display: bool, line_count: &mut u32) {
+    for (point, item) in frame.items() {
+        let origin = *point + offset;
+        if display {
+            println!("{:?} {:?}", origin, item);
+            tracing::debug!("{:?} {:?}", point, item);
+        }
         match item {
-            Text(text) => render_text(ui, text, point, display),
-            Group(group) => render_frame(ui, &group.frame, point, display),
-            _ => (),
+            Text(text) => render_text(ui, text, origin, display),
+            Group(group) => render_frame(ui, &group.frame, origin, display, line_count),
+            Shape(geom::Shape { geometry: Line(line_to), stroke: Some(stroke), .. }, _) => {
+                *line_count += 1;
+                if *line_count > 3 { return }
+                let Solid(color) = stroke.paint;
+                println!("origin {:?}", origin);
+                let dst = *line_to + origin;
+                println!("origin {:?}", origin);
+                ui.draw_line(origin.x.to_pt(), origin.y.to_pt(), dst.x.to_pt(), dst.y.to_pt(), stroke.thickness.to_pt(), color);
+                if display {
+                    tracing::debug!("draw_line {:?} {:?}", (origin, dst), color);
+                    eprintln!("draw_line {:?} {:?}", (origin, dst), color);
+                }
+            },
+            Shape(s, span) => {
+                if display { tracing::debug!("{:?} {:?}", s, span) };
+            },
+            Image(_, size, span) => {
+                if display { tracing::debug!("image {:?} {:?}", size, span); }
+            },
+            Meta(meta, _) => {
+                if display { tracing::debug!("meta {:?}", meta); }
+            },
         }
     }
 }
 
 impl eframe::App for MyApp {
-    fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        handle_files(ctx);
+
+        if let Some(bytes) = self.bytes.take() {
+            tracing::debug!("self.renderer.render_from_slice(&bytes);");
+            let page = self.renderer.render_from_vec(bytes);
+            tracing::debug!("render_from_slice done");
+            collect_font_from_frame(&mut self.font_definitions, &page);
+            ctx.set_fonts(self.font_definitions.clone());
+            self.page = Some(page);
+            ctx.request_repaint();
+            return; // wait until next frame
+        }
+
         ctx.input(|i| {
             if let Some(file) = i.raw.dropped_files.first() {
                 if let DroppedFile { bytes: Some(bytes), .. } = file {
-                    let page = self.renderer.render_from_slice(bytes);
-                    collect_font_from_frame(&mut self.font_definitions, &page);
-                    ctx.set_fonts(self.font_definitions.clone());
-                    self.page = Some(page);
-                    return; // wait until next frame
+                    self.bytes = Some(bytes.iter().copied().collect());
+                    tracing::debug!("{} bytes", bytes.len());
                 } else if let DroppedFile { path: Some(path), .. } = file {
                     let file = std::fs::read(path).unwrap();
-                    let page = self.renderer.render_from_slice(&file);
-                    collect_font_from_frame(&mut self.font_definitions, &page);
-                    ctx.set_fonts(self.font_definitions.clone());
-                    self.page = Some(page);
-                    return; // wait until next frame
+                    println!("{} bytes", file.len());
+                    self.bytes = Some(file);
                 }
             }
         });
-        handle_files(ctx);
 
         let options = Frame {
             fill: Color32::WHITE,
@@ -82,19 +115,17 @@ impl eframe::App for MyApp {
 
         egui::CentralPanel::default().frame(options).show(ctx, |ui| {
 
-            if ui.button("Open file…").clicked() {
-                #[cfg(not(target_arch = "wasm32"))]
-                if let Some(path) = FileDialog::new().add_filter("typst source file", &["typ"]).pick_file() {
-                    let page = self.renderer.render_from_path(&path);
-                    super::collect_font_from_frame(&mut self.font_definitions, &page);
-                    ctx.set_fonts(self.font_definitions.clone());
-                    self.page = Some(page);
-                    return; // wait until next frame
-                }
+            ui.text_edit_multiline(&mut self.input);
+
+            if ui.button("编译").clicked() {
+                self.bytes = Some(self.input.as_bytes().into());
+                self.display = true;
+                ctx.request_repaint();
+                return;
             }
 
             if let Some(page) = &self.page {
-                render_frame(ui, page, Point::default(), self.display);
+                render_frame(ui, page, Point::default(), self.display, &mut self.line_count);
                 self.display = false;
             }
         });

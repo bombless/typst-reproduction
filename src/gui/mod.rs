@@ -8,11 +8,42 @@ mod shapes;
 mod text;
 mod update;
 
+enum View {
+    Tree,
+    Text,
+}
+
+enum TreeNode {
+    Leaf(String),
+    Node(Vec<TreeNode>),
+}
+
 struct MyApp {
     page: Option<Frame>,
     renderer: super::Renderer,
     display: bool,
     font_definitions: FontDefinitions,
+    bytes: Option<Vec<u8>>,
+    line_count: u32,
+    view: View,
+    tree: Option<TreeNode>,
+    input: String,
+}
+
+impl MyApp {
+    fn new(renderer: super::Renderer) -> Self {
+        MyApp {
+            page: None,
+            renderer,
+            font_definitions: FontDefinitions::default(),
+            display: true,
+            bytes: None,
+            line_count: 0,
+            view: View::Text,
+            tree: None,
+            input: "#v(100pt)\n#line(length:100%)\n= 你好，世界".into(),
+        }
+    }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -20,7 +51,12 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
     let mut options = eframe::NativeOptions::default();
 
     let page = file.map(|x| renderer.render_from_path(&x));
-    let mut defs = FontDefinitions::default();
+    let mut app = MyApp::new(renderer);
+    if page.is_none() && !app.input.is_empty() {
+        let page = app.renderer.render_from_vec(app.input.as_bytes().into());
+        collect_font_from_frame(&mut app.font_definitions, &page);
+        app.page = Some(page);
+    }
 
     if let Some(page) = &page {
         let x = page.width().to_pt() as f32;
@@ -28,7 +64,7 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
 
         options.initial_window_size = Some(egui::vec2(x, y));
 
-        collect_font_from_frame(&mut defs, page);
+        collect_font_from_frame(&mut app.font_definitions, page);
     }
 
     eframe::run_native(
@@ -36,8 +72,8 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
         options,
         Box::new(move |cc| {
             
-            cc.egui_ctx.set_fonts(defs.clone());
-            Box::new(MyApp { page, renderer, font_definitions: defs, display: true })
+            cc.egui_ctx.set_fonts(app.font_definitions.clone());
+            Box::new(app)
         }),
     ).unwrap()
 }
@@ -54,7 +90,7 @@ pub(crate) fn run(_file: Option<PathBuf>, mut renderer: super::Renderer) {
         eframe::start_web(
             "the_canvas_id", // hardcode it
             web_options,
-            Box::new(|cc| Box::new(MyApp { page: None, renderer, font_definitions: defs, display: true })),
+            Box::new(|cc| Box::new(MyApp::new(renderer))),
         )
         .await
         .expect("failed to start eframe");

@@ -3471,7 +3471,6 @@ checksum = "497961ef93d974e23eb6f433eb5fe1b7930b659f06d12dec6fc44a8f554c0bba"
 [[package]]
 name = "typst"
 version = "0.0.0"
-source = "git+https://github.com/typst/typst?rev=9414d5#9414d56f97c5be71d9c37abb0fd1632a76bde995"
 dependencies = [
  "bitflags",
  "bytemuck",
@@ -3508,7 +3507,6 @@ dependencies = [
 [[package]]
 name = "typst-library"
 version = "0.0.0"
-source = "git+https://github.com/typst/typst?rev=9414d5#9414d56f97c5be71d9c37abb0fd1632a76bde995"
 dependencies = [
  "comemo",
  "csv",
@@ -3537,7 +3535,6 @@ dependencies = [
 [[package]]
 name = "typst-macros"
 version = "0.0.0"
-source = "git+https://github.com/typst/typst?rev=9414d5#9414d56f97c5be71d9c37abb0fd1632a76bde995"
 dependencies = [
  "heck",
  "proc-macro2",
