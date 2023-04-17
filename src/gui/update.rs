@@ -1,5 +1,5 @@
 use super::text::Text as _;
-use super::MyApp;
+use super::{MyApp, collect_font_from_frame};
 use eframe::egui;
 use egui::{Color32, FontFamily, Ui};
 use typst::geom::Paint::Solid;
@@ -8,7 +8,6 @@ use egui::DroppedFile;
 use typst::doc::FrameItem::{Text, Group};
 use typst::doc::{Frame as TypstFrame, TextItem};
 use typst::geom::Point;
-use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
 
@@ -57,13 +56,18 @@ fn render_frame(ui: &mut Ui, frame: &TypstFrame, offset: Point, display: bool) {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         ctx.input(|i| {
-            if !i.raw.dropped_files.is_empty() {
-
-                if let Some(DroppedFile { bytes: Some(bytes), .. }) = i.raw.dropped_files.first() {
-                    let data_url = format!("data:;base64,{}", base64_url::encode(&bytes));
-                    let path = Path::new(&data_url);
-                    tracing::debug!("drop! {:?}", path);
-                    let page = (self.renderer.borrow_mut())(path.to_path_buf());
+            if let Some(file) = i.raw.dropped_files.first() {
+                if let DroppedFile { bytes: Some(bytes), .. } = file {
+                    let page = self.renderer.render_from_slice(bytes);
+                    collect_font_from_frame(&mut self.font_definitions, &page);
+                    ctx.set_fonts(self.font_definitions.clone());
+                    self.page = Some(page);
+                    return; // wait until next frame
+                } else if let DroppedFile { path: Some(path), .. } = file {
+                    let file = std::fs::read(path).unwrap();
+                    let page = self.renderer.render_from_slice(&file);
+                    collect_font_from_frame(&mut self.font_definitions, &page);
+                    ctx.set_fonts(self.font_definitions.clone());
                     self.page = Some(page);
                     return; // wait until next frame
                 }
@@ -81,7 +85,7 @@ impl eframe::App for MyApp {
             if ui.button("Open file…").clicked() {
                 #[cfg(not(target_arch = "wasm32"))]
                 if let Some(path) = FileDialog::new().add_filter("typst source file", &["typ"]).pick_file() {
-                    let page = (self.renderer.borrow_mut())(path);
+                    let page = self.renderer.render_from_path(&path);
                     super::collect_font_from_frame(&mut self.font_definitions, &page);
                     ctx.set_fonts(self.font_definitions.clone());
                     self.page = Some(page);

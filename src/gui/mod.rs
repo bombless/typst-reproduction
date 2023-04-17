@@ -3,8 +3,6 @@ use eframe::{egui, epaint::FontFamily};
 use typst::doc::FrameItem::{Text, Group};
 use eframe::egui::{FontDefinitions, FontData};
 use std::path::PathBuf;
-use std::rc::Rc;
-use std::cell::RefCell;
 
 mod shapes;
 mod text;
@@ -12,16 +10,16 @@ mod update;
 
 struct MyApp {
     page: Option<Frame>,
-    renderer: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>,
+    renderer: super::Renderer,
     display: bool,
     font_definitions: FontDefinitions,
 }
 
 #[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>) {
+pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
     let mut options = eframe::NativeOptions::default();
 
-    let page = file.map(|x| open.borrow_mut()(x));
+    let page = file.map(|x| renderer.render_from_path(&x));
     let mut defs = FontDefinitions::default();
 
     if let Some(page) = &page {
@@ -39,7 +37,7 @@ pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> 
         Box::new(move |cc| {
             
             cc.egui_ctx.set_fonts(defs.clone());
-            Box::new(MyApp { page, renderer: open, font_definitions: defs, display: true })
+            Box::new(MyApp { page, renderer, font_definitions: defs, display: true })
         }),
     ).unwrap()
 }
@@ -47,7 +45,7 @@ pub(crate) fn run(file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> 
 
 // when compiling to web using trunk.
 #[cfg(target_arch = "wasm32")]
-pub(crate) fn run(_file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) -> Frame>>) {
+pub(crate) fn run(_file: Option<PathBuf>, mut renderer: super::Renderer) {
     let mut defs = FontDefinitions::default();
     
     let web_options = eframe::WebOptions::default();
@@ -56,7 +54,7 @@ pub(crate) fn run(_file: Option<PathBuf>, open: Rc<RefCell<dyn FnMut(PathBuf) ->
         eframe::start_web(
             "the_canvas_id", // hardcode it
             web_options,
-            Box::new(|cc| Box::new(MyApp { page: None, renderer: open, font_definitions: defs, display: true })),
+            Box::new(|cc| Box::new(MyApp { page: None, renderer, font_definitions: defs, display: true })),
         )
         .await
         .expect("failed to start eframe");

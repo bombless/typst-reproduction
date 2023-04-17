@@ -25,7 +25,6 @@ use typst::syntax::{Source, SourceId};
 use typst::util::{Buffer, PathExt};
 use typst::World;
 use walkdir::WalkDir;
-use std::rc::Rc;
 
 mod gui;
 
@@ -315,17 +314,15 @@ fn compile_once(world: &mut SystemWorld, command: &CompileSettings) -> StrResult
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn render(command: CompileSettings) -> StrResult<()> {
-    let path = if command.input == Path::new("-") { None } else { Some(command.input.to_path_buf()) };
+struct Renderer {
+    world: SystemWorld,
+}
 
-    let root = command.root.clone();
-    let font_paths = command.font_paths.clone();
-
-    let proxy = move |path: PathBuf| {
-        let root = if let Some(root) = &root {
-            root.clone()
-        } else if let Some(dir) = path
+impl Renderer {
+    fn new(root: Option<&Path>, input: &Path, font_paths: &[PathBuf]) -> Self {
+        let root = if let Some(root) = root {
+            root.to_path_buf()
+        } else if let Some(dir) = input
             .canonicalize()
             .ok()
             .as_ref()
@@ -335,36 +332,39 @@ fn render(command: CompileSettings) -> StrResult<()> {
         } else {
             PathBuf::new()
         };
-        let mut world = SystemWorld::new(root, &font_paths);
-        world.reset();
-        world.main = world.resolve(path.as_path()).map_err(|err| err.to_string()).unwrap();
-        typst::compile(&mut world).unwrap().pages.remove(0)
-    };
+        let world = SystemWorld::new(root, font_paths);
+        Self { world }
+    }
+    fn render_from_path<'a>(&mut self, path: &Path) -> typst::doc::Frame {
+        self.world.reset();
+        self.world.main = self.world.resolve(path).map_err(|err| err.to_string()).unwrap();
+        typst::compile(&mut self.world).unwrap().pages.remove(0)
+    }
+    
+    fn render_from_slice(&mut self, slice: &[u8]) -> typst::doc::Frame {
+        self.world.reset();
+        let text = String::from_utf8(slice.into()).unwrap();
+        let path = Path::new("-");
+        
+        let source = self.world.insert(path, text);
+        self.world.main = source;
+        typst::compile(&mut self.world).unwrap().pages.remove(0)
+    }
+}
 
-    gui::run(path, Rc::new(RefCell::new(proxy)));
+#[cfg(not(target_arch = "wasm32"))]
+fn render(command: CompileSettings) -> StrResult<()> {
+    let path = if command.input == Path::new("-") { None } else { Some(command.input.to_path_buf()) };
+
+    gui::run(path, Renderer::new(command.root.as_deref(), &command.input, &command.font_paths));
 
     Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
 fn render() -> StrResult<()> {
-    let proxy = move |path: PathBuf| {
-        if let Some(dir) = path
-            .canonicalize()
-            .ok()
-            .as_ref()
-            .and_then(|path| path.parent())
-        {
-            dir.into()
-        } else {
-            PathBuf::new()
-        };
-        let mut world = SystemWorld::new("".into(), &[]);
-        world.reset();
-        world.main = world.resolve(path.as_path()).map_err(|err| err.to_string()).unwrap();
-        typst::compile(&mut world).unwrap().pages.remove(0)
-    };
-    gui::run(None, Rc::new(RefCell::new(proxy)));
+
+    gui::run(None, Renderer::new(None, Path::new("-"), &[]));
 
     Ok(())
 }
