@@ -4,9 +4,11 @@ use eframe::egui;
 use egui::{Color32, FontFamily, Ui};
 use typst::geom::Paint::Solid;
 use egui::containers::Frame;
+use egui::DroppedFile;
 use typst::doc::FrameItem::{Text, Group};
 use typst::doc::{Frame as TypstFrame, TextItem};
 use typst::geom::Point;
+use std::path::Path;
 #[cfg(not(target_arch = "wasm32"))]
 use rfd::FileDialog;
 
@@ -54,6 +56,20 @@ fn render_frame(ui: &mut Ui, frame: &TypstFrame, offset: Point, display: bool) {
 
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        ctx.input(|i| {
+            if !i.raw.dropped_files.is_empty() {
+
+                if let Some(DroppedFile { bytes: Some(bytes), .. }) = i.raw.dropped_files.first() {
+                    let data_url = format!("data:;base64,{}", base64_url::encode(&bytes));
+                    let path = Path::new(&data_url);
+                    tracing::debug!("drop! {:?}", path);
+                    let page = (self.renderer.borrow_mut())(path.to_path_buf());
+                    self.page = Some(page);
+                    return; // wait until next frame
+                }
+            }
+        });
+        handle_files(ctx);
 
         let options = Frame {
             fill: Color32::WHITE,
@@ -79,5 +95,42 @@ impl eframe::App for MyApp {
             }
         });
         
+    }
+}
+
+fn handle_files(ctx: &egui::Context) {
+    use egui::*;
+    use std::fmt::Write as _;
+
+    if !ctx.input(|i| i.raw.hovered_files.is_empty()) {
+        let text = ctx.input(|i| {
+            let mut text = "Dropping files:\n".to_owned();
+            for file in &i.raw.hovered_files {
+                if let Some(path) = &file.path {
+                    write!(text, "\n{}", path.display()).ok();
+                } else if !file.mime.is_empty() {
+                    write!(text, "\n{}", file.mime).ok();
+                } else {
+                    text += "\n???";
+                }
+                text += &format!("\n{:?}", file)
+            }
+            text
+        });
+
+        tracing::debug!("drop!");
+
+        let painter =
+            ctx.layer_painter(LayerId::new(Order::Foreground, Id::new("file_drop_target")));
+
+        let screen_rect = ctx.screen_rect();
+        painter.rect_filled(screen_rect, 0.0, Color32::from_black_alpha(192));
+        painter.text(
+            screen_rect.center(),
+            Align2::CENTER_CENTER,
+            text,
+            TextStyle::Heading.resolve(&ctx.style()),
+            Color32::GOLD,
+        );
     }
 }
