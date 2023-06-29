@@ -25,14 +25,16 @@ notify = "5.1.0"
 once_cell = "1.17.1"
 same-file = "1.0.6"
 siphasher = "0.3.10"
-# typst = { git = "https://github.com/typst/typst", rev = "9414d5" }
-typst = { path = "../typst" }
-# typst-library = { git = "https://github.com/typst/typst", rev = "9414d5" }
-typst-library = { path = "../typst/library" }
+typst = { git = "https://github.com/typst/typst", rev = "9414d5" }
+#typst = { path = "../typst" }
+typst-library = { git = "https://github.com/typst/typst", rev = "9414d5" }
+#typst-library = { path = "../typst/library" }
 walkdir = "2.3.3"
 #eframe = "0.21.3"
-eframe = { path = "../egui-src/crates/eframe" }
+#eframe = { path = "../egui-src/crates/eframe" }
 wasm-bindgen-futures = "0.4"
+
+slint = "1.0.2"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
 base64-url = "2.0.0"

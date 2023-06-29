@@ -1,11 +1,8 @@
 use typst::doc::Frame;
-use eframe::{egui, epaint::FontFamily};
 use typst::doc::FrameItem::{Text, Group};
-use eframe::egui::{FontDefinitions, FontData};
 use std::path::PathBuf;
 
 mod shapes;
-mod text;
 mod update;
 
 enum View {
@@ -22,12 +19,13 @@ struct MyApp {
     page: Option<Frame>,
     renderer: super::Renderer,
     display: bool,
-    font_definitions: FontDefinitions,
+    // font_definitions: FontDefinitions,
     bytes: Option<Vec<u8>>,
     line_count: u32,
     view: View,
     tree: Option<TreeNode>,
     input: String,
+    text_items: Vec<TextItem>,
 }
 
 impl MyApp {
@@ -35,49 +33,77 @@ impl MyApp {
         MyApp {
             page: None,
             renderer,
-            font_definitions: FontDefinitions::default(),
+            // font_definitions: FontDefinitions::default(),
             display: true,
             bytes: None,
             line_count: 0,
             view: View::Text,
             tree: None,
             input: "#v(100pt)\n#line(length:100%)\n= 你好，世界".into(),
+            text_items: vec![],
         }
     }
 }
 
 #[cfg(not(target_arch = "wasm32"))]
 pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
-    let mut options = eframe::NativeOptions::default();
+    use std::rc::Rc;
 
     let page = file.map(|x| renderer.render_from_path(&x));
-    let mut app = MyApp::new(renderer);
-    if page.is_none() && !app.input.is_empty() {
+    let mut app = MyApp { ..MyApp::new(renderer)};
+    if app.page.is_none() && !app.input.is_empty() {
         let page = app.renderer.render_from_vec(app.input.as_bytes().into());
-        collect_font_from_frame(&mut app.font_definitions, &page);
+        // collect_font_from_frame(&mut app.font_definitions, &page);
         app.page = Some(page);
+        println!("Some(page)")
     }
 
-    if let Some(page) = &page {
+    let window = MainWindow::new().unwrap();
+    app.update();
+    println!("{} items", app.text_items.len());
+    for item in &app.text_items {
+        println!("{:?}", item)
+    }
+    let text_model = Rc::new(slint::VecModel::<TextItem>::from(app.text_items));
+    window.set_text_model(text_model.into());
+
+
+    if let Some(page) = &app.page {
         let x = page.width().to_pt() as f32;
         let y = page.height().to_pt() as f32;
 
-        options.initial_window_size = Some(egui::vec2(x, y));
+        window.set_float_width(x);
+        window.set_float_height(y);
+        window.run().unwrap();
 
-        collect_font_from_frame(&mut app.font_definitions, page);
+        // options.initial_window_size = Some(egui::vec2(x, y));
+
+        // collect_font_from_frame(&mut app.font_definitions, page);
     }
 
-    eframe::run_native(
-        "litter typer",
-        options,
-        Box::new(move |cc| {
-            
-            cc.egui_ctx.set_fonts(app.font_definitions.clone());
-            Box::new(app)
-        }),
-    ).unwrap()
 }
 
+slint::slint! {
+    export struct TextItem  {
+        text: string,
+        x: int,
+        y: int,
+    }
+
+    export component MainWindow inherits Window {
+        in property <[TextItem]> text-model: [];
+        in property <float> float-width: 400;
+        in property <float> float-height: 300;
+        width: float-width * 1px;
+        height: float-height * 1px;
+        
+        for item in root.text-model: Text {
+            x: item.x * 1px;
+            y: item.y * 1px;
+            text: item.text;
+        }
+    }
+}
 
 // when compiling to web using trunk.
 #[cfg(target_arch = "wasm32")]
@@ -97,20 +123,20 @@ pub(crate) fn run(_file: Option<PathBuf>, mut renderer: super::Renderer) {
     });
 }
 
-pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame) {
-    for (_, item) in frame.items() {
-        match item {
-            Text(text) => {
-                let font_ptr = unsafe { std::mem::transmute::<_, usize>(text.font.data()) };
-                let font_name = format!("font-{}", font_ptr);
-                println!("font {}", font_name);
-                if !defs.font_data.contains_key(&font_name) {
-                    defs.font_data.insert(font_name.clone(), FontData::from_owned(text.font.data().to_vec()));
-                    defs.families.insert(FontFamily::Name(font_name.clone().into()), vec![font_name.clone()]);
-                }
-            },
-            Group(group) => collect_font_from_frame(defs, &group.frame),
-            _ => (),
-        }
-    }
-}
+// pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame) {
+//     for (_, item) in frame.items() {
+//         match item {
+//             Text(text) => {
+//                 let font_ptr = unsafe { std::mem::transmute::<_, usize>(text.font.data()) };
+//                 let font_name = format!("font-{}", font_ptr);
+//                 println!("font {}", font_name);
+//                 if !defs.font_data.contains_key(&font_name) {
+//                     defs.font_data.insert(font_name.clone(), FontData::from_owned(text.font.data().to_vec()));
+//                     defs.families.insert(FontFamily::Name(font_name.clone().into()), vec![font_name.clone()]);
+//                 }
+//             },
+//             Group(group) => collect_font_from_frame(defs, &group.frame),
+//             _ => (),
+//         }
+//     }
+// }
