@@ -70,15 +70,11 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
         let page = app.renderer.render_from_vec(app.input.as_bytes().into());
         // collect_font_from_frame(&mut app.font_definitions, &page);
         app.page = Some(page);
-        println!("Some(page)")
     }
 
     let window = MainWindow::new().unwrap();
     app.update();
-    println!("{} items", app.text_items.len());
-    for item in &app.text_items {
-        println!("{:?}", item)
-    }
+    
     let text_model = Rc::new(slint::VecModel::<TextItem>::from(app.text_items));
     window.set_text_model(text_model.into());
     let line_model = Rc::new(slint::VecModel::<LineItem>::from(app.line_items));

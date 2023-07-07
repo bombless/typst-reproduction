@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use super::{MyApp};
 use typst::geom::Paint::Solid;
 use typst::doc::FrameItem::{Text, Group, Shape, Image, Meta};
@@ -11,15 +13,24 @@ fn render_text(ui: &mut MyApp, text: &TextItem, point: Point, display: bool) {
 
     let mut font_family = None;
     let fonts = text.font.ttf().names();
+
+    if display {
+        println!("================ {:?}", text.glyphs)
+    }
+    
     for i in 0 .. fonts.len() {
-        let font = fonts.get(i).unwrap().to_string();
+        let font = fonts.get(i).unwrap();
+        if font.language_id != 2052 { continue }
+
+        if display {
+            println!("{:?} {:?}", font.to_string(), font)
+        }
+
+        let font = font.to_string();
         if font.is_none() { continue }
         font_family = font;
-        if display {
-            println!("{:?}", fonts.get(i).unwrap())
-        }
     }
-    if display {
+    if false {
         if !text.glyphs.iter().any(|x| x.c.is_whitespace()) {
             println!("render_text {:?}", point);
             tracing::debug!("render_text {:?}", point);
@@ -34,20 +45,33 @@ fn render_text(ui: &mut MyApp, text: &TextItem, point: Point, display: bool) {
     let Solid(color) = text.fill;
     let rgba_color = color.to_rgba();
 
+    if font_family.is_none() {
+        println!("?? wat {:?}", fonts.len());
+        println!("================ {:?}", text.glyphs);
+        println!(">>>>>>>>>>>>>");
+
+        for i in 0 .. fonts.len() {
+            let font = fonts.get(i).unwrap();
+
+            println!("{:?} {:?}", font.to_string(), font)
+        }
+        println!("<<<<<<<<<<<<<<<");
+    }
+
     ui.draw_text(
         &text.glyphs.iter().map(|x| x.c).collect::<String>(),
         point.x.to_pt() as f32,
         point.y.to_pt() as f32,
         text.size.to_pt() as f32,
         slint::Color::from_argb_u8(rgba_color.a, rgba_color.r, rgba_color.g, rgba_color.b),
-        font_family.unwrap()
+        font_family.unwrap_or_else(|| "宋体".into())
     );
 }
 
 fn render_frame(ui: &mut MyApp, frame: &TypstFrame, offset: Point, display: bool, line_count: &mut u32) {
     for (point, item) in frame.items() {
         let origin = *point + offset;
-        if display {
+        if false {
             println!("{:?} {:?}", origin, item);
             tracing::debug!("{:?} {:?}", point, item);
         }
@@ -58,13 +82,11 @@ fn render_frame(ui: &mut MyApp, frame: &TypstFrame, offset: Point, display: bool
                 *line_count += 1;
                 if *line_count > 3 { return }
                 let Solid(color) = stroke.paint;
-                println!("origin {:?}", origin);
                 let dst = *line_to + origin;
-                println!("origin {:?}", origin);
                 let color = color.to_rgba();
                 let color = slint::Color::from_argb_u8(color.a, color.r, color.g, color.b);
                 ui.draw_line(origin.x.to_pt(), origin.y.to_pt(), dst.x.to_pt(), dst.y.to_pt(), stroke.thickness.to_pt(), color);
-                if display {
+                if false {
                     tracing::debug!("draw_line {:?} {:?}", (origin, dst), color);
                     eprintln!("draw_line {:?} {:?}", (origin, dst), color);
                 }
