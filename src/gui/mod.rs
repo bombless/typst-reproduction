@@ -40,7 +40,20 @@ impl MyApp {
             line_count: 0,
             view: View::Text,
             tree: None,
-            input: "#v(100pt)\n#line(length:100%)\n= 你好，世界\n#text(red)[红字]".into(),
+            input: r#"
+            #v(100pt)
+            #line(length:100%)
+            = 你好，世界
+            #text(red)[红字]
+            #set text(font: ("宋体"), size: 30pt)
+            宋体
+            #set text(font: ("黑体"), size: 30pt)
+            黑体
+            #set text(font: ("楷体"), size: 30pt)
+            楷体
+            #set text(font: ("常规体"), size: 30pt)
+            常规体
+            "#.into(),
             text_items: vec![],
             line_items: vec![],
         }
@@ -93,6 +106,8 @@ slint::slint! {
         x: int,
         y: int,
         color: color,
+        size: float,
+        font-family: string,
     }
     export struct LineItem  {
         x1: float, x2: float, y1: float, y2: float,
@@ -112,12 +127,8 @@ slint::slint! {
             y: item.y * 1px;
             text: item.text;
             color: item.color;
-        }
-        
-        for item in root.text-model: Text {
-            x: item.x * 1px;
-            y: item.y * 1px;
-            text: item.text;
+            font-size: item.size * 1px;
+            font-family: item.font-family;
         }
         
         for item in root.line-model: Path {

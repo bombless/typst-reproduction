@@ -8,6 +8,17 @@ use typst::geom::Point;
 
 
 fn render_text(ui: &mut MyApp, text: &TextItem, point: Point, display: bool) {
+
+    let mut font_family = None;
+    let fonts = text.font.ttf().names();
+    for i in 0 .. fonts.len() {
+        let font = fonts.get(i).unwrap().to_string();
+        if font.is_none() { continue }
+        font_family = font;
+        if display {
+            println!("{:?}", fonts.get(i).unwrap())
+        }
+    }
     if display {
         if !text.glyphs.iter().any(|x| x.c.is_whitespace()) {
             println!("render_text {:?}", point);
@@ -29,6 +40,7 @@ fn render_text(ui: &mut MyApp, text: &TextItem, point: Point, display: bool) {
         point.y.to_pt() as f32,
         text.size.to_pt() as f32,
         slint::Color::from_argb_u8(rgba_color.a, rgba_color.r, rgba_color.g, rgba_color.b),
+        font_family.unwrap()
     );
 }
 
@@ -71,12 +83,15 @@ fn render_frame(ui: &mut MyApp, frame: &TypstFrame, offset: Point, display: bool
 }
 
 impl MyApp {
-    fn draw_text(&mut self, input: &str, x: f32, y: f32, size: f32, color: slint::Color) {
+    fn draw_text(&mut self, input: &str, x: f32, y: f32, size: f32, color: slint::Color, font_family: String) {
+        use std::rc::Rc;
         self.text_items.push(super::TextItem {
             text: input.into(),
             x: x as _,
             y: y as _,
             color,
+            size,
+            font_family: font_family.into()
         });
     }
     fn draw_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, thickness: f64, color: slint::Color) {
@@ -87,6 +102,7 @@ impl MyApp {
             x2: x2 as _,
             y2: y2 as _,
             color,
+            // font_families: slint::ModelRc::new(font_families.into_iter().map(slint::SharedString::from).collect::<Vec<_>>())
         })
     }
     pub fn update(&mut self) {
