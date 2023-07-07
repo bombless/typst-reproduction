@@ -28,7 +28,7 @@ fn render_text(ui: &mut MyApp, text: &TextItem, point: Point, display: bool) {
         point.x.to_pt() as f32,
         point.y.to_pt() as f32,
         text.size.to_pt() as f32,
-        (rgba_color.r, rgba_color.g, rgba_color.b, rgba_color.a),
+        slint::Color::from_argb_u8(rgba_color.a, rgba_color.r, rgba_color.g, rgba_color.b),
     );
 }
 
@@ -71,11 +71,12 @@ fn render_frame(ui: &mut MyApp, frame: &TypstFrame, offset: Point, display: bool
 }
 
 impl MyApp {
-    fn draw_text<T>(&mut self, input: &str, x: f32, y: f32, size: f32, _: T) {
+    fn draw_text(&mut self, input: &str, x: f32, y: f32, size: f32, color: slint::Color) {
         self.text_items.push(super::TextItem {
             text: input.into(),
             x: x as _,
             y: y as _,
+            color,
         });
     }
     fn draw_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, thickness: f64, color: slint::Color) {

@@ -40,7 +40,7 @@ impl MyApp {
             line_count: 0,
             view: View::Text,
             tree: None,
-            input: "#v(100pt)\n#line(length:100%)\n= 你好，世界".into(),
+            input: "#v(100pt)\n#line(length:100%)\n= 你好，世界\n#text(red)[红字]".into(),
             text_items: vec![],
             line_items: vec![],
         }
@@ -92,6 +92,7 @@ slint::slint! {
         text: string,
         x: int,
         y: int,
+        color: color,
     }
     export struct LineItem  {
         x1: float, x2: float, y1: float, y2: float,
@@ -110,6 +111,7 @@ slint::slint! {
             x: item.x * 1px;
             y: item.y * 1px;
             text: item.text;
+            color: item.color;
         }
         
         for item in root.text-model: Text {
