@@ -95,7 +95,7 @@ slint::slint! {
     }
     export struct LineItem  {
         x1: float, x2: float, y1: float, y2: float,
-        thickness: float,
+        thickness: float, color: color,
     }
 
     export component MainWindow inherits Window {
@@ -119,7 +119,7 @@ slint::slint! {
         }
         
         for item in root.line-model: Path {
-            stroke: blue;
+            stroke: item.color;
             stroke-width: item.thickness * 1px;
             MoveTo {
                 x: 0; y: 0;

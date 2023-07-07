@@ -49,6 +49,8 @@ fn render_frame(ui: &mut MyApp, frame: &TypstFrame, offset: Point, display: bool
                 println!("origin {:?}", origin);
                 let dst = *line_to + origin;
                 println!("origin {:?}", origin);
+                let color = color.to_rgba();
+                let color = slint::Color::from_argb_u8(color.a, color.r, color.g, color.b);
                 ui.draw_line(origin.x.to_pt(), origin.y.to_pt(), dst.x.to_pt(), dst.y.to_pt(), stroke.thickness.to_pt(), color);
                 if display {
                     tracing::debug!("draw_line {:?} {:?}", (origin, dst), color);
@@ -76,13 +78,14 @@ impl MyApp {
             y: y as _,
         });
     }
-    fn draw_line<T>(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, thickness: f64, _: T) {
+    fn draw_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, thickness: f64, color: slint::Color) {
         self.line_items.push(super::LineItem {
             thickness: thickness as _,
             x1: x1 as _,
             y1: y1 as _,
             x2: x2 as _,
             y2: y2 as _,
+            color,
         })
     }
     pub fn update(&mut self) {
