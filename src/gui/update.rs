@@ -77,7 +77,13 @@ impl MyApp {
         });
     }
     fn draw_line<T>(&mut self, x1: f64, y1: f64, x2: f64, y2: f64, thickness: f64, _: T) {
-
+        self.line_items.push(super::LineItem {
+            thickness: thickness as _,
+            x1: x1 as _,
+            y1: y1 as _,
+            x2: x2 as _,
+            y2: y2 as _,
+        })
     }
     pub fn update(&mut self) {
         let mut line_count = 0;

@@ -26,6 +26,7 @@ struct MyApp {
     tree: Option<TreeNode>,
     input: String,
     text_items: Vec<TextItem>,
+    line_items: Vec<LineItem>,
 }
 
 impl MyApp {
@@ -41,6 +42,7 @@ impl MyApp {
             tree: None,
             input: "#v(100pt)\n#line(length:100%)\n= 你好，世界".into(),
             text_items: vec![],
+            line_items: vec![],
         }
     }
 }
@@ -66,6 +68,8 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
     }
     let text_model = Rc::new(slint::VecModel::<TextItem>::from(app.text_items));
     window.set_text_model(text_model.into());
+    let line_model = Rc::new(slint::VecModel::<LineItem>::from(app.line_items));
+    window.set_line_model(line_model.into());
 
 
     if let Some(page) = &app.page {
@@ -89,11 +93,16 @@ slint::slint! {
         x: int,
         y: int,
     }
+    export struct LineItem  {
+        x1: float, x2: float, y1: float, y2: float,
+        thickness: float,
+    }
 
     export component MainWindow inherits Window {
         in property <[TextItem]> text-model: [];
-        in property <float> float-width: 400;
-        in property <float> float-height: 300;
+        in property <[LineItem]> line-model: [];
+        in property <float> float-width: 0;
+        in property <float> float-height: 0;
         width: float-width * 1px;
         height: float-height * 1px;
         
@@ -101,6 +110,29 @@ slint::slint! {
             x: item.x * 1px;
             y: item.y * 1px;
             text: item.text;
+        }
+        
+        for item in root.text-model: Text {
+            x: item.x * 1px;
+            y: item.y * 1px;
+            text: item.text;
+        }
+        
+        for item in root.line-model: Path {
+            stroke: blue;
+            stroke-width: item.thickness * 1px;
+            MoveTo {
+                x: 0; y: 0;
+            }
+            MoveTo {
+                x: float-width; y: float-height;
+            }
+            MoveTo {
+                x: item.x1; y: item.y1;
+            }
+            LineTo {
+                x: item.x2; y: item.y2;
+            }
         }
     }
 }
