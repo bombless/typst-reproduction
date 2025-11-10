@@ -141,7 +141,13 @@ impl CompileSettings {
             None => input.with_extension("pdf"),
         };
 
-        Self { input, output, watch, root, font_paths }
+        Self {
+            input,
+            output,
+            watch,
+            root,
+            font_paths,
+        }
     }
 
     /// Create a new compile settings from the CLI arguments and a compile command.
@@ -171,7 +177,10 @@ struct FontsSettings {
 impl FontsSettings {
     /// Create font settings from the field values.
     pub fn new(font_paths: Vec<PathBuf>, variants: bool) -> Self {
-        Self { font_paths, variants }
+        Self {
+            font_paths,
+            variants,
+        }
     }
 
     /// Create a new font settings from the CLI arguments.
@@ -294,7 +303,9 @@ fn compile_once(world: &mut SystemWorld, command: &CompileSettings) -> StrResult
     status(command, Status::Compiling).unwrap();
 
     world.reset();
-    world.main = world.resolve(&command.input).map_err(|err| err.to_string())?;
+    world.main = world
+        .resolve(&command.input)
+        .map_err(|err| err.to_string())?;
 
     match typst::compile(world) {
         // Export the PDF.
@@ -308,8 +319,7 @@ fn compile_once(world: &mut SystemWorld, command: &CompileSettings) -> StrResult
         // Print diagnostics.
         Err(errors) => {
             status(command, Status::Error).unwrap();
-            print_diagnostics(&world, *errors)
-                .map_err(|_| "failed to print diagnostics")?;
+            print_diagnostics(&world, *errors).map_err(|_| "failed to print diagnostics")?;
             Ok(true)
         }
     }
@@ -343,21 +353,30 @@ impl Renderer {
             Err(e) => {
                 tracing::error!("{:?}", e);
                 eprintln!("{:?}", e);
-                return typst::doc::Frame::new(typst::geom::Axes { x: Abs::pt(300.), y: Abs::pt(300.) });}
+                return typst::doc::Frame::new(typst::geom::Axes {
+                    x: Abs::pt(300.),
+                    y: Abs::pt(300.),
+                });
+            }
         };
         tracing::debug!("{} pages", pages.len());
         pages.remove(0)
     }
     fn render_from_path<'a>(&mut self, path: &Path) -> typst::doc::Frame {
         self.world.reset();
-        self.compile(self.world.resolve(path).map_err(|err| err.to_string()).unwrap())
+        self.compile(
+            self.world
+                .resolve(path)
+                .map_err(|err| err.to_string())
+                .unwrap(),
+        )
     }
-    
+
     fn render_from_vec(&mut self, slice: Vec<u8>) -> typst::doc::Frame {
         self.world.reset();
         let text = String::from_utf8(slice.into()).unwrap();
         let path = Path::new("test.typ");
-        
+
         let source = self.world.insert(path, text);
         self.compile(source)
     }
@@ -365,16 +384,22 @@ impl Renderer {
 
 #[cfg(not(target_arch = "wasm32"))]
 fn render(command: CompileSettings) -> StrResult<()> {
-    let path = if command.input == Path::new("-") { None } else { Some(command.input.to_path_buf()) };
+    let path = if command.input == Path::new("-") {
+        None
+    } else {
+        Some(command.input.to_path_buf())
+    };
 
-    gui::run(path, Renderer::new(command.root.as_deref(), &command.input, &command.font_paths));
+    gui::run(
+        path,
+        Renderer::new(command.root.as_deref(), &command.input, &command.font_paths),
+    );
 
     Ok(())
 }
 
 #[cfg(target_arch = "wasm32")]
 fn render() -> StrResult<()> {
-
     gui::run(None, Renderer::new(None, Path::new("-"), &[]));
 
     Ok(())
@@ -445,7 +470,10 @@ fn print_diagnostics(
     errors: Vec<SourceError>,
 ) -> Result<(), codespan_reporting::files::Error> {
     let mut w = StandardStream::stderr(ColorChoice::Auto);
-    let config = term::Config { tab_width: 2, ..Default::default() };
+    let config = term::Config {
+        tab_width: 2,
+        ..Default::default()
+    };
 
     for error in errors {
         // The main diagnostic.
@@ -459,12 +487,12 @@ fn print_diagnostics(
         // Stacktrace-like helper diagnostics.
         for point in error.trace {
             let message = point.v.to_string();
-            let help = Diagnostic::help().with_message(message).with_labels(vec![
-                Label::primary(
+            let help = Diagnostic::help()
+                .with_message(message)
+                .with_labels(vec![Label::primary(
                     point.span.source(),
                     world.source(point.span.source()).range(point.span),
-                ),
-            ]);
+                )]);
 
             term::emit(&mut w, &config, world, &help)?;
         }
@@ -484,7 +512,11 @@ fn fonts(command: FontsSettings) -> StrResult<()> {
         println!("{name}");
         if command.variants {
             for info in infos {
-                let FontVariant { style, weight, stretch } = info.variant;
+                let FontVariant {
+                    style,
+                    weight,
+                    stretch,
+                } = info.variant;
                 println!("- Style: {style:?}, Weight: {weight:?}, Stretch: {stretch:?}");
             }
         }
@@ -592,7 +624,7 @@ impl World for SystemWorld {
 }
 
 impl SystemWorld {
-    fn slot(&self, path: &Path) -> FileResult<RefMut<PathSlot>> {
+    fn slot(&self, path: &Path) -> FileResult<RefMut<'_, PathSlot>> {
         let mut hashes = self.hashes.borrow_mut();
         let hash = match hashes.get(path).cloned() {
             Some(hash) => hash,
@@ -639,8 +671,7 @@ impl SystemWorld {
 
     fn dependant(&self, path: &Path) -> bool {
         self.hashes.borrow().contains_key(&path.normalize())
-            || PathHash::new(path)
-                .map_or(false, |hash| self.paths.borrow().contains_key(&hash))
+            || PathHash::new(path).map_or(false, |hash| self.paths.borrow().contains_key(&hash))
     }
 
     fn reset(&mut self) {
@@ -697,23 +728,17 @@ impl<'a> codespan_reporting::files::Files<'a> for SystemWorld {
             })
     }
 
-    fn line_range(
-        &'a self,
-        id: SourceId,
-        given: usize,
-    ) -> CodespanResult<std::ops::Range<usize>> {
+    fn line_range(&'a self, id: SourceId, given: usize) -> CodespanResult<std::ops::Range<usize>> {
         let source = World::source(self, id);
         source
             .line_to_range(given)
-            .ok_or_else(|| CodespanError::LineTooLarge { given, max: source.len_lines() })
+            .ok_or_else(|| CodespanError::LineTooLarge {
+                given,
+                max: source.len_lines(),
+            })
     }
 
-    fn column_number(
-        &'a self,
-        id: SourceId,
-        _: usize,
-        given: usize,
-    ) -> CodespanResult<usize> {
+    fn column_number(&'a self, id: SourceId, _: usize, given: usize) -> CodespanResult<usize> {
         let source = World::source(self, id);
         source.byte_to_column(given).ok_or_else(|| {
             let max = source.len_bytes();
@@ -735,7 +760,10 @@ struct FontSearcher {
 impl FontSearcher {
     /// Create a new, empty system searcher.
     fn new() -> Self {
-        Self { book: FontBook::new(), fonts: vec![] }
+        Self {
+            book: FontBook::new(),
+            fonts: vec![],
+        }
     }
 
     /// Search for fonts in the linux system font directories.
@@ -750,7 +778,7 @@ impl FontSearcher {
     }
 
     #[cfg(target_arch = "wasm32")]
-    fn search_system(&mut self) { }
+    fn search_system(&mut self) {}
 
     /// Search for fonts in the macOS system font directories.
     #[cfg(target_os = "macos")]
@@ -767,8 +795,7 @@ impl FontSearcher {
     /// Search for fonts in the Windows system font directories.
     #[cfg(windows)]
     fn search_system(&mut self) {
-        let windir =
-            std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
+        let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
 
         self.search_dir(Path::new(&windir).join("Fonts"));
 
