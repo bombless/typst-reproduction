@@ -88,7 +88,7 @@ fn render_frame(
                 _,
             ) => {
                 *line_count += 1;
-                if *line_count > 13 {
+                if *line_count > 23 {
                     return;
                 }
                 let Solid(color) = stroke.paint;
@@ -138,6 +138,7 @@ impl eframe::App for MyApp {
             collect_font_from_frame(&mut self.font_definitions, &page);
             ctx.set_fonts(self.font_definitions.clone());
             self.page = Some(page);
+            println!("page update");
             ctx.request_repaint();
             return; // wait until next frame
         }

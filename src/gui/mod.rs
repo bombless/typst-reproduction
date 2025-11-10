@@ -13,6 +13,8 @@ use std::sync::Arc;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
+use ttf_parser::{name_id, Face};
+
 fn hash_u64(data: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
     data.hash(&mut hasher);
@@ -49,7 +51,7 @@ impl MyApp {
             bytes: None,
             view: View::Text,
             tree: None,
-            input: "#v(100pt)\n#line(length:100%)\n= 你好，世界".into(),
+            input: "#v(100pt)\n#line(length:100%)\n= 你好，世界233".into(),
             font_definitions: FontDefinitions::empty(),
         }
     }
@@ -86,6 +88,48 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
     .unwrap()
 }
 
+fn make(c: char, font_data: &[u8]) -> [[char; 64]; 32] {
+    use rusttype::{point, Font, Scale};
+    // This only succeeds if collection consists of one font
+    let font = Font::try_from_bytes(font_data).expect("Error constructing Font");
+
+    // The font size to use
+    let scale = Scale { x: 64.0, y: 32.0 };
+
+    let v_metrics = font.v_metrics(scale);
+    // println!("v_metrics {v_metrics:?}");
+
+    let mut data = [[' '; 64]; 32];
+    let cursor = point(0.0, v_metrics.ascent);
+    let glyph = font.glyph(c);
+    let scaled = glyph.scaled(scale);
+    let glyph = scaled.positioned(cursor);
+    if let Some(bounding_box) = glyph.pixel_bounding_box() {
+        // Draw the glyph into the image per-pixel by using the draw closure
+        glyph.draw(|x, y, v| {
+            let x = x as i32 + bounding_box.min.x + 1;
+            let y = y as i32 + bounding_box.min.y;
+            if x >= 0 && y >= 0 && x < 64 && y < 32 {
+                let x = x as usize;
+                let y = y as usize;
+                let print = if v >= 0.5 {
+                    '@'
+                } else if v >= 0.25 {
+                    '$'
+                } else if v >= 0.125 {
+                    '+'
+                } else {
+                    ' '
+                };
+                data[y][x] = print;
+            } else {
+                println!("Out of bounds: ({}, {}) limit (64, 32)", x, y,);
+            }
+        });
+    }
+    data
+}
+
 pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame) {
     for (_, item) in frame.items() {
         match item {
@@ -95,7 +139,22 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
 
                 if !defs.font_data.contains_key(&font_name) {
                     println!("=== font {font_name}");
-                    if char_in_font(text.font.data().as_slice(), '你') {
+                    let data = make('2', text.font.data().as_slice());
+                    let mut empty = true;
+                    for line in data {
+                        for item in line {
+                            if item != ' ' {
+                                empty = false;
+                            }
+                            print!("{item}");
+                        }
+                        println!();
+                    }
+                    println!("'2' is {}", if empty { "empty" } else { "not empty" });
+
+                    let face = Face::parse(text.font.data().as_slice(), 0).unwrap();
+                    print_font_info(&face);
+                    if char_in_font(&face, '你') {
                         defs.font_data.insert(
                             "chinese".to_owned(),
                             Arc::new(FontData::from_owned(text.font.data().to_vec())),
@@ -123,9 +182,17 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
     }
 }
 
-fn char_in_font(data: &[u8], ch: char) -> bool {
-    use ttf_parser::{name_id, Face};
-    let face = Face::parse(data, 0).unwrap();
+fn char_in_font(face: &Face, ch: char) -> bool {
+    face.glyph_index(ch).is_some()
+}
+
+fn print_font_info(face: &Face) {
+    if face.glyph_index('2').is_none() {
+        println!("damn, '2' is not present");
+    } else {
+        println!("'2' is present");
+    }
+
     let names = face.names();
 
     let family = names
@@ -147,11 +214,13 @@ fn char_in_font(data: &[u8], ch: char) -> bool {
         .map(|x| x.name)
         .unwrap_or(b"?");
 
-    println!("size {:.2}MB", data.len() as f64 / 1_000_000.0);
+    println!(
+        "size {:.2}MB",
+        face.raw_face().data.len() as f64 / 1_000_000.0
+    );
 
     println!("Family     : {}", String::from_utf8_lossy(family));
     println!("Subfamily  : {}", String::from_utf8_lossy(subfamily));
     println!("Full name  : {}", String::from_utf8_lossy(full_name));
     println!("PostScript : {}", String::from_utf8_lossy(postscript));
-    face.glyph_index(ch).is_some()
 }
