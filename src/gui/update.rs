@@ -135,9 +135,8 @@ impl eframe::App for MyApp {
             tracing::debug!("self.renderer.render_from_slice(&bytes);");
             let page = self.renderer.render_from_vec(bytes);
             tracing::debug!("render_from_slice done");
-            let mut font_definitions = FontDefinitions::empty();
-            collect_font_from_frame(&mut font_definitions, &page);
-            ctx.set_fonts(font_definitions);
+            collect_font_from_frame(&mut self.font_definitions, &page);
+            ctx.set_fonts(self.font_definitions.clone());
             self.page = Some(page);
             ctx.request_repaint();
             return; // wait until next frame

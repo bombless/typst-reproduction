@@ -39,6 +39,7 @@ struct MyApp {
     view: View,
     tree: Option<TreeNode>,
     input: String,
+    font_definitions: FontDefinitions,
 }
 
 impl MyApp {
@@ -51,6 +52,7 @@ impl MyApp {
             view: View::Text,
             tree: None,
             input: "#v(100pt)\n#line(length:100%)\n= 你好，世界".into(),
+            font_definitions: FontDefinitions::empty(),
         }
     }
 }
@@ -64,7 +66,7 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
     let mut font_definitions = FontDefinitions::default();
     if page.is_none() && !app.input.is_empty() {
         let page = app.renderer.render_from_vec(app.input.as_bytes().into());
-        collect_font_from_frame(&mut font_definitions, &page);
+        collect_font_from_frame(&mut app.font_definitions, &page);
         app.page = Some(page);
     }
 
@@ -104,13 +106,13 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
                             .entry(FontFamily::Proportional)
                             .or_default()
                             .insert(0, "chinese".to_owned());
-                        continue;
                     }
                     println!("##done");
                     defs.font_data.insert(
                         font_name.to_owned(),
                         Arc::new(FontData::from_owned(text.font.data().to_vec())),
                     );
+                    println!("#font family {font_name}");
                     defs.families
                         .entry(FontFamily::Name(font_name.clone().into()))
                         .or_default()
