@@ -8,8 +8,6 @@ use std::path::PathBuf;
 use typst::doc::Frame;
 use typst::doc::FrameItem::{Group, Text};
 
-use rusttype::{point, Font, Scale};
-
 use std::sync::Arc;
 
 use std::collections::hash_map::DefaultHasher;

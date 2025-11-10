@@ -5,7 +5,6 @@ use super::{collect_font_from_frame, MyApp};
 use eframe::egui;
 use egui::containers::Frame;
 use egui::DroppedFile;
-use egui::FontDefinitions;
 use egui::{Color32, FontFamily, Ui};
 use typst::doc::FrameItem::{Group, Image, Meta, Shape, Text};
 use typst::doc::{Frame as TypstFrame, TextItem};
