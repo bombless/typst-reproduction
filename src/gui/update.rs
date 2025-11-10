@@ -1,3 +1,4 @@
+use super::hash_u64;
 use super::shapes::Shapes as _;
 use super::text::Text as _;
 use super::{collect_font_from_frame, MyApp};
@@ -26,12 +27,21 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
         }
     }
 
-    let font_ptr = unsafe { std::mem::transmute::<_, usize>(text.font.data()) };
-    let font_name = format!("font-{}", font_ptr);
+    let font_hash = hash_u64(text.font.data().as_slice());
+    let font_name = format!("font-{}", font_hash);
     let family = FontFamily::Name(font_name.into());
 
     let Solid(color) = text.fill;
     let rgba_color = color.to_rgba();
+
+    if display {
+        println!(
+            "draw text at ({}, {}) font size {}",
+            point.x.to_pt(),
+            point.y.to_pt(),
+            text.size.to_pt()
+        );
+    }
 
     ui.draw_text(
         &text.glyphs.iter().map(|x| x.c).collect::<String>(),
@@ -50,11 +60,17 @@ fn render_frame(
     display: bool,
     line_count: &mut u32,
 ) {
+    if display {
+        println!("render_frame");
+    }
     for (point, item) in frame.items() {
+        if display {
+            println!("one frame item");
+        }
         let origin = *point + offset;
         if display {
             println!("{:?} {:?}", origin, item);
-            tracing::debug!("{:?} {:?}", point, item);
+            tracing::debug!("#{:?} {:?}", point, item);
         }
         match item {
             Text(text) => render_text(ui, text, origin, display),
@@ -68,7 +84,7 @@ fn render_frame(
                 _,
             ) => {
                 *line_count += 1;
-                if *line_count > 3 {
+                if *line_count > 13 {
                     return;
                 }
                 let Solid(color) = stroke.paint;
@@ -160,13 +176,8 @@ impl eframe::App for MyApp {
                 }
 
                 if let Some(page) = &self.page {
-                    render_frame(
-                        ui,
-                        page,
-                        Point::default(),
-                        self.display,
-                        &mut self.line_count,
-                    );
+                    let mut line_count = 0;
+                    render_frame(ui, page, Point::default(), self.display, &mut line_count);
                     self.display = false;
                 }
             });

@@ -1,3 +1,7 @@
+mod shapes;
+mod text;
+mod update;
+
 use eframe::egui::{FontData, FontDefinitions};
 use eframe::epaint::FontFamily;
 use std::path::PathBuf;
@@ -9,9 +13,14 @@ use ttf_parser::Face;
 
 use std::sync::Arc;
 
-mod shapes;
-mod text;
-mod update;
+use std::collections::hash_map::DefaultHasher;
+use std::hash::{Hash, Hasher};
+
+fn hash_u64(data: &[u8]) -> u64 {
+    let mut hasher = DefaultHasher::new();
+    data.hash(&mut hasher);
+    hasher.finish()
+}
 
 enum View {
     Tree,
@@ -28,7 +37,6 @@ struct MyApp {
     renderer: super::Renderer,
     display: bool,
     bytes: Option<Vec<u8>>,
-    line_count: u32,
     view: View,
     tree: Option<TreeNode>,
     input: String,
@@ -41,7 +49,6 @@ impl MyApp {
             renderer,
             display: true,
             bytes: None,
-            line_count: 0,
             view: View::Text,
             tree: None,
             input: "#v(100pt)\n#line(length:100%)\n= 你好，世界".into(),
@@ -84,19 +91,20 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
     for (_, item) in frame.items() {
         match item {
             Text(text) => {
+                let font_hash = hash_u64(text.font.data().as_slice());
+                let font_name = format!("font-{}", font_hash);
                 if !char_in_font(text.font.data().as_slice(), '你') {
+                    println!("skip {font_name}");
                     continue;
                 }
-                let font_ptr = unsafe { std::mem::transmute::<_, usize>(text.font.data()) };
-                let font_name = format!("font-{}", font_ptr);
                 println!("font {}", font_name);
                 let data = make('你', text.font.data().as_slice());
-                for line in data {
-                    for item in line {
-                        print!("{item}");
-                    }
-                    println!();
-                }
+                // for line in data {
+                //     for item in line {
+                //         print!("{item}");
+                //     }
+                //     println!();
+                // }
                 if !defs.font_data.contains_key(&font_name) {
                     defs.font_data.insert(
                         "chinese".to_owned(),
@@ -106,6 +114,14 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
                         .entry(FontFamily::Proportional)
                         .or_default()
                         .insert(0, "chinese".to_owned());
+                    defs.font_data.insert(
+                        font_name.to_owned(),
+                        Arc::new(FontData::from_owned(text.font.data().to_vec())),
+                    );
+                    defs.families
+                        .entry(FontFamily::Name(font_name.clone().into()))
+                        .or_default()
+                        .insert(0, font_name.to_owned());
                 }
             }
             Group(group) => collect_font_from_frame(defs, &group.frame),
