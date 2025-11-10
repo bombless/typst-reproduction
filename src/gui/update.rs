@@ -15,17 +15,17 @@ use typst::geom::Paint::Solid;
 use typst::geom::Point;
 
 fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
-    if display {
-        if !text.glyphs.iter().any(|x| x.c.is_whitespace()) {
-            println!("render_text {:?}", point);
-            tracing::debug!("render_text {:?}", point);
-            for x in &text.glyphs {
-                print!("{:?},", x.c);
-                tracing::debug!("{:?},", x.c);
-            }
-            println!();
-        }
-    }
+    // if display {
+    //     if !text.glyphs.iter().any(|x| x.c.is_whitespace()) {
+    //         println!("render_text {:?}", point);
+    //         tracing::debug!("render_text {:?}", point);
+    //         for x in &text.glyphs {
+    //             print!("{:?},", x.c);
+    //             tracing::debug!("{:?},", x.c);
+    //         }
+    //         println!();
+    //     }
+    // }
 
     let font_hash = hash_u64(text.font.data().as_slice());
     let font_name = format!("font-{}", font_hash);
@@ -64,18 +64,18 @@ fn render_frame(
     display: bool,
     line_count: &mut u32,
 ) {
-    if display {
-        println!("render_frame");
-    }
+    // if display {
+    //     println!("render_frame");
+    // }
     for (point, item) in frame.items() {
         if display {
             println!("one frame item");
         }
         let origin = *point + offset;
-        if display {
-            println!("{:?} {:?}", origin, item);
-            tracing::debug!("#{:?} {:?}", point, item);
-        }
+        // if display {
+        //     println!("{:?} {:?}", origin, item);
+        //     tracing::debug!("#{:?} {:?}", point, item);
+        // }
         match item {
             Text(text) => render_text(ui, text, origin, display),
             Group(group) => render_frame(ui, &group.frame, origin, display, line_count),
@@ -92,9 +92,9 @@ fn render_frame(
                     return;
                 }
                 let Solid(color) = stroke.paint;
-                println!("origin {:?}", origin);
+                // println!("origin {:?}", origin);
                 let dst = *line_to + origin;
-                println!("origin {:?}", origin);
+                // println!("origin {:?}", origin);
                 ui.draw_line(
                     origin.x.to_pt(),
                     origin.y.to_pt(),

@@ -93,27 +93,20 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
                 let font_hash = hash_u64(text.font.data().as_slice());
                 let font_name = format!("font-{}", font_hash);
 
-                println!("=== font {font_name}");
-                if !char_in_font(text.font.data().as_slice(), '你') {
-                    println!("##skip {font_name}");
-                    continue;
-                }
-                let data = make('你', text.font.data().as_slice());
-                // for line in data {
-                //     for item in line {
-                //         print!("{item}");
-                //     }
-                //     println!();
-                // }
                 if !defs.font_data.contains_key(&font_name) {
-                    defs.font_data.insert(
-                        "chinese".to_owned(),
-                        Arc::new(FontData::from_owned(text.font.data().to_vec())),
-                    );
-                    defs.families
-                        .entry(FontFamily::Proportional)
-                        .or_default()
-                        .insert(0, "chinese".to_owned());
+                    println!("=== font {font_name}");
+                    if char_in_font(text.font.data().as_slice(), '你') {
+                        defs.font_data.insert(
+                            "chinese".to_owned(),
+                            Arc::new(FontData::from_owned(text.font.data().to_vec())),
+                        );
+                        defs.families
+                            .entry(FontFamily::Proportional)
+                            .or_default()
+                            .insert(0, "chinese".to_owned());
+                        continue;
+                    }
+                    println!("##done");
                     defs.font_data.insert(
                         font_name.to_owned(),
                         Arc::new(FontData::from_owned(text.font.data().to_vec())),
@@ -130,46 +123,6 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
     }
 }
 
-fn make(c: char, font_data: &[u8]) -> [[char; 64]; 32] {
-    // This only succeeds if collection consists of one font
-    let font = Font::try_from_bytes(font_data).expect("Error constructing Font");
-
-    // The font size to use
-    let scale = Scale { x: 64.0, y: 32.0 };
-
-    let v_metrics = font.v_metrics(scale);
-    // println!("v_metrics {v_metrics:?}");
-
-    let mut data = [[' '; 64]; 32];
-    let cursor = point(0.0, v_metrics.ascent);
-    let glyph = font.glyph(c);
-    let scaled = glyph.scaled(scale);
-    let glyph = scaled.positioned(cursor);
-    if let Some(bounding_box) = glyph.pixel_bounding_box() {
-        // Draw the glyph into the image per-pixel by using the draw closure
-        glyph.draw(|x, y, v| {
-            let x = x as i32 + bounding_box.min.x + 1;
-            let y = y as i32 + bounding_box.min.y;
-            if x >= 0 && y >= 0 && x < 64 && y < 32 {
-                let x = x as usize;
-                let y = y as usize;
-                let print = if v >= 0.5 {
-                    '@'
-                } else if v >= 0.25 {
-                    '$'
-                } else if v >= 0.125 {
-                    '+'
-                } else {
-                    ' '
-                };
-                data[y][x] = print;
-            } else {
-                println!("Out of bounds: ({}, {}) limit (64, 32)", x, y,);
-            }
-        });
-    }
-    data
-}
 fn char_in_font(data: &[u8], ch: char) -> bool {
     use ttf_parser::{name_id, Face};
     let face = Face::parse(data, 0).unwrap();
@@ -197,8 +150,8 @@ fn char_in_font(data: &[u8], ch: char) -> bool {
     println!("size {:.2}MB", data.len() as f64 / 1_000_000.0);
 
     println!("Family     : {}", String::from_utf8_lossy(family));
-    println!("Subfamily  : {:?}", String::from_utf8_lossy(subfamily));
-    println!("Full name  : {:?}", String::from_utf8_lossy(full_name));
-    println!("PostScript : {:?}", String::from_utf8_lossy(postscript));
+    println!("Subfamily  : {}", String::from_utf8_lossy(subfamily));
+    println!("Full name  : {}", String::from_utf8_lossy(full_name));
+    println!("PostScript : {}", String::from_utf8_lossy(postscript));
     face.glyph_index(ch).is_some()
 }
