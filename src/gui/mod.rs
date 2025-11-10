@@ -9,7 +9,6 @@ use typst::doc::Frame;
 use typst::doc::FrameItem::{Group, Text};
 
 use rusttype::{point, Font, Scale};
-use ttf_parser::Face;
 
 use std::sync::Arc;
 
@@ -93,11 +92,12 @@ pub(crate) fn collect_font_from_frame(defs: &mut FontDefinitions, frame: &Frame)
             Text(text) => {
                 let font_hash = hash_u64(text.font.data().as_slice());
                 let font_name = format!("font-{}", font_hash);
+
+                println!("=== font {font_name}");
                 if !char_in_font(text.font.data().as_slice(), '你') {
-                    println!("skip {font_name}");
+                    println!("##skip {font_name}");
                     continue;
                 }
-                println!("font {}", font_name);
                 let data = make('你', text.font.data().as_slice());
                 // for line in data {
                 //     for item in line {
@@ -171,6 +171,34 @@ fn make(c: char, font_data: &[u8]) -> [[char; 64]; 32] {
     data
 }
 fn char_in_font(data: &[u8], ch: char) -> bool {
+    use ttf_parser::{name_id, Face};
     let face = Face::parse(data, 0).unwrap();
+    let names = face.names();
+
+    let family = names
+        .get(name_id::TYPOGRAPHIC_FAMILY)
+        .or_else(|| names.get(name_id::FAMILY))
+        .map(|x| x.name)
+        .unwrap_or(b"?");
+    let subfamily = names
+        .get(name_id::TYPOGRAPHIC_SUBFAMILY)
+        .or_else(|| names.get(name_id::SUBFAMILY))
+        .map(|x| x.name)
+        .unwrap_or(b"?");
+    let full_name = names
+        .get(name_id::FULL_NAME)
+        .map(|x| x.name)
+        .unwrap_or(b"?");
+    let postscript = names
+        .get(name_id::POST_SCRIPT_NAME)
+        .map(|x| x.name)
+        .unwrap_or(b"?");
+
+    println!("size {:.2}MB", data.len() as f64 / 1_000_000.0);
+
+    println!("Family     : {}", String::from_utf8_lossy(family));
+    println!("Subfamily  : {:?}", String::from_utf8_lossy(subfamily));
+    println!("Full name  : {:?}", String::from_utf8_lossy(full_name));
+    println!("PostScript : {:?}", String::from_utf8_lossy(postscript));
     face.glyph_index(ch).is_some()
 }

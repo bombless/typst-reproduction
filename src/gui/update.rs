@@ -29,22 +29,26 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
 
     let font_hash = hash_u64(text.font.data().as_slice());
     let font_name = format!("font-{}", font_hash);
-    let family = FontFamily::Name(font_name.into());
+    let family = FontFamily::Name(font_name.clone().into());
 
     let Solid(color) = text.fill;
     let rgba_color = color.to_rgba();
 
+    let content = text.glyphs.iter().map(|x| x.c).collect::<String>();
+
     if display {
         println!(
-            "draw text at ({}, {}) font size {}",
+            "draw text at ({}, {}) font size {} font_name {} content {}",
             point.x.to_pt(),
             point.y.to_pt(),
-            text.size.to_pt()
+            text.size.to_pt(),
+            &font_name,
+            &content
         );
     }
 
     ui.draw_text(
-        &text.glyphs.iter().map(|x| x.c).collect::<String>(),
+        &content,
         point.x.to_pt() as f32,
         point.y.to_pt() as f32,
         text.size.to_pt() as f32,
