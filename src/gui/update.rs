@@ -38,12 +38,13 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
 
     if display {
         println!(
-            "draw text at ({}, {}) font size {} font_name {} content {}",
+            "draw text at ({}, {}) font size {} font_name {} content {} color {:?}",
             point.x.to_pt(),
             point.y.to_pt(),
             text.size.to_pt(),
             &font_name,
-            &content
+            &content,
+            &rgba_color
         );
     }
 
