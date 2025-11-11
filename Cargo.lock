@@ -5121,6 +5121,7 @@ dependencies = [
  "typst-realize",
  "typst-render",
  "typst-svg",
+ "typst-syntax",
  "typst-timing",
  "typst-utils",
  "walkdir",

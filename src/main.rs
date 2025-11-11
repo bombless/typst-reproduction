@@ -27,9 +27,7 @@ use typst_library::text::{Font, FontBook};
 
 use chrono::offset::{FixedOffset, Local};
 
-use typst::diag::{FileError, FileResult};
-
-use typst::foundations::{Bytes, Dict, IntoValue, TargetElem};
+use typst_library::foundations::{Bytes, Dict, IntoValue, TargetElem};
 use typst_library::introspection::Introspector;
 
 use std::io::Write;
@@ -37,13 +35,15 @@ use std::io::Write;
 use chrono::{DateTime, Datelike, Timelike, Utc};
 use ecow::eco_format;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use typst::diag::{At, HintedString, SourceResult, StrResult, Warned, bail};
-use typst::foundations::{Datetime, Smart};
-use typst::layout::{Frame, Page, PageRanges, PagedDocument};
-use typst::syntax::{FileId, Lines, Source, Span, VirtualPath};
 use typst_html::HtmlDocument;
+use typst_library::diag::{
+    At, FileError, FileResult, HintedString, SourceResult, StrResult, Warned, bail,
+};
+use typst_library::foundations::{Datetime, Smart};
+use typst_library::layout::{Frame, Page, PageRanges, PagedDocument};
 use typst_library::{Library, model::DocumentInfo};
 use typst_pdf::{PdfOptions, PdfStandards, Timestamp};
+use typst_syntax::{FileId, Lines, Source, Span, VirtualPath};
 
 use typst_utils::{LazyHash, hash128};
 
@@ -445,8 +445,8 @@ impl SystemWorld {
                 .features
                 .iter()
                 .map(|&feature| match feature {
-                    Feature::Html => typst::Feature::Html,
-                    Feature::A11yExtras => typst::Feature::A11yExtras,
+                    Feature::Html => typst_library::Feature::Html,
+                    Feature::A11yExtras => typst_library::Feature::A11yExtras,
                 })
                 .collect();
 
@@ -760,7 +760,7 @@ impl<T: Clone> SlotCell<T> {
         // Read and hash the file.
         let result = timed!("loading file", load());
         println!("slot taken result {result:?}");
-        let fingerprint = timed!("hashing file", typst::utils::hash128(&result));
+        let fingerprint = timed!("hashing file", typst_utils::hash128(&result));
 
         // If the file contents didn't change, yield the old processed data.
         if mem::replace(&mut self.fingerprint, fingerprint) == fingerprint

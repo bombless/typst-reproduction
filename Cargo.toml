@@ -32,6 +32,7 @@ typst-pdf = "0.14.0"
 typst-svg = "0.14.0"
 typst-render = "0.14.0"
 typst-eval = "0.14.0"
+typst-syntax = "0.14.0"
 typst-realize = "0.14.0"
 typst-timing = "0.14.0"
 typst-kit = { version = "0.14.0", features = ["embed-fonts"] }
