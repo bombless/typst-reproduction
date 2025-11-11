@@ -1,897 +1,1161 @@
-use std::cell::{RefCell, RefMut};
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::hash::Hash;
-use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process;
+use std::{
+    fmt, fs,
+    io::{self, Read},
+    mem,
+};
+use typst_library::foundations::{NativeRuleMap, StyleChain, Styles, Value};
 
-#[cfg(not(target_arch = "wasm32"))]
-use clap::{ArgAction, Parser, Subcommand};
+use comemo::{Track, Tracked};
+use std::sync::{LazyLock, OnceLock};
+
+use clap::builder::{TypedValueParser, ValueParser};
+use clap::{ArgAction, Args, ColorChoice, Parser, Subcommand, ValueEnum, ValueHint};
+use clap_complete::Shell;
+use typst_kit::{download::Downloader, package::PackageStorage};
+use typst_library::World;
+use typst_library::engine::{Engine, Route, Sink, Traced};
+use typst_library::routines::Routines;
+use typst_timing::timed;
+
+use typst::LibraryExt;
+
+use rustc_hash::FxHashMap;
+
+use parking_lot::Mutex;
+use typst_kit::fonts::{FontSlot, Fonts};
+use typst_library::text::{Font, FontBook};
+
+use chrono::offset::{FixedOffset, Local};
+
+use typst::diag::{FileError, FileResult};
+
+use typst::foundations::{Bytes, Dict, IntoValue, TargetElem};
+use typst_library::introspection::Introspector;
+
+use std::io::Write;
+
+use chrono::{DateTime, Datelike, Timelike, Utc};
 use codespan_reporting::diagnostic::{Diagnostic, Label};
-use codespan_reporting::term::{self, termcolor};
-use comemo::Prehashed;
-use elsa::FrozenVec;
-use memmap2::Mmap;
-use notify::{RecommendedWatcher, RecursiveMode, Watcher};
-use once_cell::unsync::OnceCell;
-use same_file::{is_same_file, Handle};
-use siphasher::sip128::{Hasher128, SipHasher};
-use termcolor::{ColorChoice, StandardStream, WriteColor};
-use typst::diag::{FileError, FileResult, SourceError, StrResult};
-use typst::eval::Library;
-use typst::font::{Font, FontBook, FontInfo, FontVariant};
-use typst::geom::Abs;
-use typst::syntax::{Source, SourceId};
-use typst::util::{Buffer, PathExt};
-use typst::World;
-use walkdir::WalkDir;
+use codespan_reporting::term;
+use ecow::eco_format;
+use parking_lot::RwLock;
+use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
+use typst::WorldExt;
+use typst::diag::{
+    At, HintedStrResult, HintedString, Severity, SourceDiagnostic, SourceResult, StrResult, Warned,
+    bail,
+};
+use typst::foundations::{Datetime, Smart};
+use typst::layout::{Frame, Page, PageRanges, PagedDocument};
+use typst::syntax::{FileId, Lines, Source, Span, VirtualPath};
+use typst_html::HtmlDocument;
+use typst_library::{Library, model::DocumentInfo};
+use typst_pdf::{PdfOptions, PdfStandards, Timestamp};
+
+use typst_utils::LazyHash;
 
 mod gui;
-
-type CodespanResult<T> = Result<T, CodespanError>;
-type CodespanError = codespan_reporting::files::Error;
-
-const TYPST_VERSION: &str = "0.1";
-
-/// typst creates PDF files from .typ files
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Parser)]
-#[clap(name = "typst", version = TYPST_VERSION, author)]
-pub struct CliArguments {
-    /// Add additional directories to search for fonts
-    #[clap(long = "font-path", value_name = "DIR", action = ArgAction::Append)]
-    font_paths: Vec<PathBuf>,
-
-    /// Configure the root for absolute paths
-    #[clap(long = "root", value_name = "DIR")]
-    root: Option<PathBuf>,
-
-    /// The typst command to run
-    #[command(subcommand)]
-    command: Command,
-}
-
-/// What to do.
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Subcommand)]
-#[command()]
-enum Command {
-    /// Renders the input file
-    Render(RenderCommand),
-
-    /// Compiles the input file into a PDF file
-    Compile(CompileCommand),
-
-    /// Watches the input file and recompiles on changes
-    Watch(WatchCommand),
-
-    /// List all discovered fonts in system and custom font paths
-    Fonts(FontsCommand),
-}
-
-/// Renders the input file
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Parser)]
-pub struct RenderCommand {
-    /// Path to input Typst file
-    input: PathBuf,
-}
-
-/// Compiles the input file into a PDF file
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Parser)]
-pub struct CompileCommand {
-    /// Path to input Typst file
-    input: PathBuf,
-
-    /// Path to output PDF file
-    output: Option<PathBuf>,
-}
-
-/// Watches the input file and recompiles on changes
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Parser)]
-pub struct WatchCommand {
-    /// Path to input Typst file
-    input: PathBuf,
-
-    /// Path to output PDF file
-    output: Option<PathBuf>,
-}
-
-/// List all discovered fonts in system and custom font paths
-#[cfg(not(target_arch = "wasm32"))]
-#[derive(Debug, Clone, Parser)]
-pub struct FontsCommand {
-    /// Add additional directories to search for fonts
-    #[arg(long)]
-    variants: bool,
-}
-
-/// A summary of the input arguments relevant to compilation.
-struct CompileSettings {
-    /// The path to the input file.
-    input: PathBuf,
-
-    /// The path to the output file.
-    output: PathBuf,
-
-    /// Whether to watch the input files for changes.
-    watch: bool,
-
-    /// The root directory for absolute paths.
-    root: Option<PathBuf>,
-
-    /// The paths to search for fonts.
-    font_paths: Vec<PathBuf>,
-}
-
-impl CompileSettings {
-    /// Create a new compile settings from the field values.
-    pub fn new(
-        input: PathBuf,
-        output: Option<PathBuf>,
-        watch: bool,
-        root: Option<PathBuf>,
-        font_paths: Vec<PathBuf>,
-    ) -> Self {
-        let output = match output {
-            Some(path) => path,
-            None => input.with_extension("pdf"),
-        };
-
-        Self {
-            input,
-            output,
-            watch,
-            root,
-            font_paths,
-        }
+pub fn main() -> StrResult<()> {
+    fn help() {
+        println!("Usage: typst (compile|render) <input_file>");
     }
-
-    /// Create a new compile settings from the CLI arguments and a compile command.
-    ///
-    /// # Panics
-    /// Panics if the command is not a compile or watch command.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_arguments(args: CliArguments) -> Self {
-        let (input, output, watch) = match args.command {
-            Command::Render(command) => (command.input, None, false),
-            Command::Compile(command) => (command.input, command.output, false),
-            Command::Watch(command) => (command.input, command.output, true),
-            _ => unreachable!(),
-        };
-        Self::new(input, output, watch, args.root, args.font_paths)
-    }
-}
-
-struct FontsSettings {
-    /// The font paths
-    font_paths: Vec<PathBuf>,
-
-    /// Wether to include font variants
-    variants: bool,
-}
-
-impl FontsSettings {
-    /// Create font settings from the field values.
-    pub fn new(font_paths: Vec<PathBuf>, variants: bool) -> Self {
-        Self {
-            font_paths,
-            variants,
-        }
-    }
-
-    /// Create a new font settings from the CLI arguments.
-    ///
-    /// # Panics
-    /// Panics if the command is not a fonts command.
-    #[cfg(not(target_arch = "wasm32"))]
-    pub fn with_arguments(args: CliArguments) -> Self {
-        match args.command {
-            Command::Fonts(command) => Self::new(args.font_paths, command.variants),
-            _ => unreachable!(),
-        }
-    }
-}
-
-/// Entry point.
-#[cfg(not(target_arch = "wasm32"))]
-pub fn main() {
-    let arguments = CliArguments::parse();
-
-    let res = match &arguments.command {
-        Command::Render(_) => render(CompileSettings::with_arguments(arguments)),
-        Command::Compile(_) | Command::Watch(_) => {
-            compile(CompileSettings::with_arguments(arguments))
-        }
-        Command::Fonts(_) => fonts(FontsSettings::with_arguments(arguments)),
-    };
-
-    if let Err(msg) = res {
-        print_error(&msg).expect("failed to print error");
-    }
-}
-#[cfg(target_arch = "wasm32")]
-pub fn main() {
-    render();
-}
-
-/// Print an application-level error (independent from a source file).
-fn print_error(msg: &str) -> io::Result<()> {
-    let mut w = StandardStream::stderr(ColorChoice::Auto);
-    let styles = term::Styles::default();
-
-    w.set_color(&styles.header_error)?;
-    write!(w, "error")?;
-
-    w.reset()?;
-    writeln!(w, ": {msg}.")
-}
-
-/// Execute a compilation command.
-fn compile(command: CompileSettings) -> StrResult<()> {
-    let root = if let Some(root) = &command.root {
-        root.clone()
-    } else if let Some(dir) = command
-        .input
-        .canonicalize()
-        .ok()
-        .as_ref()
-        .and_then(|path| path.parent())
-    {
-        dir.into()
-    } else {
-        PathBuf::new()
-    };
-
-    // Create the world that serves sources, fonts and files.
-    let mut world = SystemWorld::new(root, &command.font_paths);
-
-    // Perform initial compilation.
-    let failed = compile_once(&mut world, &command)?;
-    if !command.watch {
-        // Return with non-zero exit code in case of error.
-        if failed {
-            process::exit(1);
-        }
-
+    let args: Vec<String> = std::env::args().collect();
+    if args.len() < 3 {
+        help();
         return Ok(());
     }
-
-    // Setup file watching.
-    let (tx, rx) = std::sync::mpsc::channel();
-    let mut watcher = RecommendedWatcher::new(tx, notify::Config::default())
-        .map_err(|_| "failed to watch directory")?;
-
-    // Watch root directory recursively.
-    watcher
-        .watch(&world.root, RecursiveMode::Recursive)
-        .map_err(|_| "failed to watch directory")?;
-
-    // Handle events.
-    let timeout = std::time::Duration::from_millis(100);
-    loop {
-        let mut recompile = false;
-        for event in rx
-            .recv()
-            .into_iter()
-            .chain(std::iter::from_fn(|| rx.recv_timeout(timeout).ok()))
-        {
-            let event = event.map_err(|_| "failed to watch directory")?;
-            if event
-                .paths
-                .iter()
-                .all(|path| is_same_file(path, &command.output).unwrap_or(false))
-            {
-                continue;
-            }
-
-            recompile |= world.relevant(&event);
+    match args[1].as_str() {
+        "compile" => {
+            Renderer.render_from_path(&"main.typ".into());
+            Ok(())
         }
-
-        if recompile {
-            compile_once(&mut world, &command)?;
-            comemo::evict(30);
+        "render" => render(),
+        _ => {
+            help();
+            Ok(())
         }
     }
 }
 
-/// Compile a single time.
-fn compile_once(world: &mut SystemWorld, command: &CompileSettings) -> StrResult<bool> {
-    status(command, Status::Compiling).unwrap();
-
-    world.reset();
-    world.main = world
-        .resolve(&command.input)
-        .map_err(|err| err.to_string())?;
-
-    match typst::compile(world) {
-        // Export the PDF.
-        Ok(document) => {
-            let buffer = typst::export::pdf(&document);
-            fs::write(&command.output, buffer).map_err(|_| "failed to write PDF file")?;
-            status(command, Status::Success).unwrap();
-            Ok(false)
-        }
-
-        // Print diagnostics.
-        Err(errors) => {
-            status(command, Status::Error).unwrap();
-            print_diagnostics(&world, *errors).map_err(|_| "failed to print diagnostics")?;
-            Ok(true)
-        }
-    }
-}
-
-struct Renderer {
-    world: SystemWorld,
-}
+struct Renderer;
 
 impl Renderer {
-    fn new(root: Option<&Path>, input: &Path, font_paths: &[PathBuf]) -> Self {
-        let root = if let Some(root) = root {
-            root.to_path_buf()
-        } else if let Some(dir) = input
-            .canonicalize()
-            .ok()
-            .as_ref()
-            .and_then(|path| path.parent())
-        {
-            dir.into()
-        } else {
-            PathBuf::new()
+    fn render_from_path(&self, path: &PathBuf) -> Frame {
+        let font_args: FontArgs = FontArgs {
+            font_paths: Vec::new(),
+            ignore_system_fonts: false,
         };
-        let world = SystemWorld::new(root, font_paths);
-        Self { world }
-    }
-    fn compile(&mut self, source: SourceId) -> typst::doc::Frame {
-        self.world.main = source;
-        let mut pages = match typst::compile(&mut self.world) {
-            Ok(x) => x.pages,
-            Err(e) => {
-                tracing::error!("{:?}", e);
-                eprintln!("{:?}", e);
-                return typst::doc::Frame::new(typst::geom::Axes {
-                    x: Abs::pt(300.),
-                    y: Abs::pt(300.),
-                });
-            }
+        let package = PackageArgs::default();
+        let world_args = WorldArgs {
+            root: None,
+            inputs: Vec::new(),
+            font: font_args,
+            package: package,
+            creation_timestamp: None,
         };
-        tracing::debug!("{} pages", pages.len());
-        pages.remove(0)
-    }
-    fn render_from_path<'a>(&mut self, path: &Path) -> typst::doc::Frame {
-        self.world.reset();
-        self.compile(
-            self.world
-                .resolve(path)
-                .map_err(|err| err.to_string())
-                .unwrap(),
-        )
-    }
+        let process_args = ProcessArgs {
+            jobs: None,
+            features: Vec::new(),
+        };
+        let mut world =
+            SystemWorld::new(&Input::Path(path.clone()), &world_args, &process_args).unwrap();
 
-    fn render_from_vec(&mut self, slice: Vec<u8>) -> typst::doc::Frame {
-        self.world.reset();
-        let text = String::from_utf8(slice.into()).unwrap();
-        let path = Path::new("test.typ");
-
-        let source = self.world.insert(path, text);
-        self.compile(source)
+        let Warned { output, .. } = compile::<PagedDocument>(&mut world);
+        let doc: PagedDocument = output.unwrap();
+        doc.pages.into_iter().next().unwrap().frame
+    }
+    fn render_from_vec(&self, _: Vec<u8>) -> Frame {
+        unimplemented!()
+    }
+}
+pub fn compile<D>(world: &dyn World) -> Warned<SourceResult<D>>
+where
+    D: Document,
+{
+    let mut sink = Sink::new();
+    let output = compile_impl::<D>(world.track(), Traced::default().track(), &mut sink);
+    Warned {
+        output,
+        warnings: sink.warnings(),
     }
 }
 
-#[cfg(not(target_arch = "wasm32"))]
-fn render(command: CompileSettings) -> StrResult<()> {
-    let path = if command.input == Path::new("-") {
-        None
-    } else {
-        Some(command.input.to_path_buf())
-    };
-
-    gui::run(
-        path,
-        Renderer::new(command.root.as_deref(), &command.input, &command.font_paths),
-    );
-
-    Ok(())
-}
-
-#[cfg(target_arch = "wasm32")]
 fn render() -> StrResult<()> {
-    gui::run(None, Renderer::new(None, Path::new("-"), &[]));
+    let path = Some(PathBuf::from("main.typ"));
 
-    Ok(())
-}
-
-/// Clear the terminal and render the status message.
-fn status(command: &CompileSettings, status: Status) -> io::Result<()> {
-    if !command.watch {
-        return Ok(());
-    }
-
-    let esc = 27 as char;
-    let input = command.input.display();
-    let output = command.output.display();
-    let time = chrono::offset::Local::now();
-    let timestamp = time.format("%H:%M:%S");
-    let message = status.message();
-    let color = status.color();
-
-    let mut w = StandardStream::stderr(ColorChoice::Auto);
-    write!(w, "{esc}c{esc}[1;1H")?;
-
-    w.set_color(&color)?;
-    write!(w, "watching")?;
-    w.reset()?;
-    writeln!(w, " {input}")?;
-
-    w.set_color(&color)?;
-    write!(w, "writing to")?;
-    w.reset()?;
-    writeln!(w, " {output}")?;
-
-    writeln!(w)?;
-    writeln!(w, "[{timestamp}] {message}")?;
-    writeln!(w)?;
-
-    w.flush()
-}
-
-/// The status in which the watcher can be.
-enum Status {
-    Compiling,
-    Success,
-    Error,
-}
-
-impl Status {
-    fn message(&self) -> &str {
-        match self {
-            Self::Compiling => "compiling ...",
-            Self::Success => "compiled successfully",
-            Self::Error => "compiled with errors",
-        }
-    }
-
-    fn color(&self) -> termcolor::ColorSpec {
-        let styles = term::Styles::default();
-        match self {
-            Self::Error => styles.header_error,
-            _ => styles.header_note,
-        }
-    }
-}
-
-/// Print diagnostic messages to the terminal.
-fn print_diagnostics(
-    world: &SystemWorld,
-    errors: Vec<SourceError>,
-) -> Result<(), codespan_reporting::files::Error> {
-    let mut w = StandardStream::stderr(ColorChoice::Auto);
-    let config = term::Config {
-        tab_width: 2,
-        ..Default::default()
-    };
-
-    for error in errors {
-        // The main diagnostic.
-        let range = error.range(world);
-        let diag = Diagnostic::error()
-            .with_message(error.message)
-            .with_labels(vec![Label::primary(error.span.source(), range)]);
-
-        term::emit(&mut w, &config, world, &diag)?;
-
-        // Stacktrace-like helper diagnostics.
-        for point in error.trace {
-            let message = point.v.to_string();
-            let help = Diagnostic::help()
-                .with_message(message)
-                .with_labels(vec![Label::primary(
-                    point.span.source(),
-                    world.source(point.span.source()).range(point.span),
-                )]);
-
-            term::emit(&mut w, &config, world, &help)?;
-        }
-    }
-
-    Ok(())
-}
-
-/// Execute a font listing command.
-fn fonts(command: FontsSettings) -> StrResult<()> {
-    let mut searcher = FontSearcher::new();
-    searcher.search_system();
-    for path in &command.font_paths {
-        searcher.search_dir(path)
-    }
-    for (name, infos) in searcher.book.families() {
-        println!("{name}");
-        if command.variants {
-            for info in infos {
-                let FontVariant {
-                    style,
-                    weight,
-                    stretch,
-                } = info.variant;
-                println!("- Style: {style:?}, Weight: {weight:?}, Stretch: {stretch:?}");
-            }
-        }
-    }
+    gui::run(path, Renderer);
 
     Ok(())
 }
 
 /// A world that provides access to the operating system.
-struct SystemWorld {
+pub struct SystemWorld {
+    /// The working directory.
+    workdir: Option<PathBuf>,
+    /// The root relative to which absolute paths are resolved.
     root: PathBuf,
-    library: Prehashed<Library>,
-    book: Prehashed<FontBook>,
+    /// The input path.
+    main: FileId,
+    /// Typst's standard library.
+    library: LazyHash<Library>,
+    /// Metadata about discovered fonts.
+    book: LazyHash<FontBook>,
+    /// Locations of and storage for lazily loaded fonts.
     fonts: Vec<FontSlot>,
-    hashes: RefCell<HashMap<PathBuf, FileResult<PathHash>>>,
-    paths: RefCell<HashMap<PathHash, PathSlot>>,
-    sources: FrozenVec<Box<Source>>,
-    main: SourceId,
+    /// Maps file ids to source files and buffers.
+    slots: Mutex<FxHashMap<FileId, FileSlot>>,
+    /// Holds information about where packages are stored.
+    package_storage: PackageStorage,
+    /// The current datetime if requested. This is stored here to ensure it is
+    /// always the same within one compilation.
+    /// Reset between compilations if not [`Now::Fixed`].
+    now: Now,
 }
 
-/// Holds details about the location of a font and lazily the font itself.
-struct FontSlot {
-    path: PathBuf,
-    index: u32,
-    font: OnceCell<Option<Font>>,
+/// The current date and time.
+enum Now {
+    /// The date and time if the environment `SOURCE_DATE_EPOCH` is set.
+    /// Used for reproducible builds.
+    Fixed(DateTime<Utc>),
+    /// The current date and time if the time is not externally fixed.
+    System(OnceLock<DateTime<Utc>>),
 }
 
-/// Holds canonical data for all paths pointing to the same entity.
-#[derive(Default)]
-struct PathSlot {
-    source: OnceCell<FileResult<SourceId>>,
-    buffer: OnceCell<FileResult<Buffer>>,
+/// An error that occurs during world construction.
+#[derive(Debug)]
+pub enum WorldCreationError {
+    /// The input file does not appear to exist.
+    InputNotFound(PathBuf),
+    /// The input file is not contained within the root folder.
+    InputOutsideRoot,
+    /// The root directory does not appear to exist.
+    RootNotFound(PathBuf),
+    /// Another type of I/O error.
+    Io(io::Error),
 }
 
-impl SystemWorld {
-    fn new(root: PathBuf, font_paths: &[PathBuf]) -> Self {
-        let mut searcher = FontSearcher::new();
-        searcher.search_system();
-
-        #[cfg(feature = "embed-fonts")]
-        searcher.add_embedded();
-
-        for path in font_paths {
-            println!("search font path {path:?}");
-            searcher.search_dir(path)
-        }
-
-        Self {
-            root,
-            library: Prehashed::new(typst_library::build()),
-            book: Prehashed::new(searcher.book),
-            fonts: searcher.fonts,
-            hashes: RefCell::default(),
-            paths: RefCell::default(),
-            sources: FrozenVec::new(),
-            main: SourceId::detached(),
+impl fmt::Display for WorldCreationError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            WorldCreationError::InputNotFound(path) => {
+                write!(f, "input file not found (searched at {})", path.display())
+            }
+            WorldCreationError::InputOutsideRoot => {
+                write!(f, "source file must be contained in project root")
+            }
+            WorldCreationError::RootNotFound(path) => {
+                write!(
+                    f,
+                    "root directory not found (searched at {})",
+                    path.display()
+                )
+            }
+            WorldCreationError::Io(err) => write!(f, "{err}"),
         }
     }
 }
 
-impl World for SystemWorld {
-    fn root(&self) -> &Path {
+/// Returns a new package storage for the given args.
+fn storage(args: &PackageArgs) -> PackageStorage {
+    PackageStorage::new(
+        args.package_cache_path.clone(),
+        args.package_path.clone(),
+        Downloader::new(""),
+    )
+}
+
+/// Arguments related to where packages are stored in the system.
+#[derive(Debug, Clone, Args, Default)]
+pub struct PackageArgs {
+    /// Custom path to local packages, defaults to system-dependent location.
+    #[clap(long = "package-path", env = "TYPST_PACKAGE_PATH", value_name = "DIR")]
+    pub package_path: Option<PathBuf>,
+
+    /// Custom path to package cache, defaults to system-dependent location.
+    #[clap(
+        long = "package-cache-path",
+        env = "TYPST_PACKAGE_CACHE_PATH",
+        value_name = "DIR"
+    )]
+    pub package_cache_path: Option<PathBuf>,
+}
+
+const ENV_PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
+
+/// Common arguments to customize available fonts.
+#[derive(Debug, Clone, Parser)]
+pub struct FontArgs {
+    /// Adds additional directories that are recursively searched for fonts.
+    ///
+    /// If multiple paths are specified, they are separated by the system's path
+    /// separator (`:` on Unix-like systems and `;` on Windows).
+    #[clap(
+        long = "font-path",
+        env = "TYPST_FONT_PATHS",
+        value_name = "DIR",
+        value_delimiter = ENV_PATH_SEP,
+    )]
+    pub font_paths: Vec<PathBuf>,
+
+    /// Ensures system fonts won't be searched, unless explicitly included via
+    /// `--font-path`.
+    #[arg(long, env = "TYPST_IGNORE_SYSTEM_FONTS")]
+    pub ignore_system_fonts: bool,
+}
+
+/// Arguments for the construction of a world. Shared by compile, watch, and
+/// query.
+#[derive(Debug, Clone, Args)]
+pub struct WorldArgs {
+    /// Configures the project root (for absolute paths).
+    #[clap(long = "root", env = "TYPST_ROOT", value_name = "DIR")]
+    pub root: Option<PathBuf>,
+
+    /// Add a string key-value pair visible through `sys.inputs`.
+    #[clap(
+        long = "input",
+        value_name = "key=value",
+        action = ArgAction::Append,
+        value_parser = ValueParser::new(parse_sys_input_pair),
+    )]
+    pub inputs: Vec<(String, String)>,
+
+    /// Common font arguments.
+    #[clap(flatten)]
+    pub font: FontArgs,
+
+    /// Arguments related to storage of packages in the system.
+    #[clap(flatten)]
+    pub package: PackageArgs,
+
+    /// The document's creation date formatted as a UNIX timestamp.
+    ///
+    /// For more information, see <https://reproducible-builds.org/specs/source-date-epoch/>.
+    #[clap(
+        long = "creation-timestamp",
+        env = "SOURCE_DATE_EPOCH",
+        value_name = "UNIX_TIMESTAMP",
+        value_parser = parse_source_date_epoch,
+    )]
+    pub creation_timestamp: Option<DateTime<Utc>>,
+}
+
+fn parse_sys_input_pair(raw: &str) -> Result<(String, String), String> {
+    let (key, val) = raw
+        .split_once('=')
+        .ok_or("input must be a key and a value separated by an equal sign")?;
+    let key = key.trim().to_owned();
+    if key.is_empty() {
+        return Err("the key was missing or empty".to_owned());
+    }
+    let val = val.trim().to_owned();
+    Ok((key, val))
+}
+
+/// Parses a UNIX timestamp according to <https://reproducible-builds.org/specs/source-date-epoch/>
+fn parse_source_date_epoch(raw: &str) -> Result<DateTime<Utc>, String> {
+    let timestamp: i64 = raw
+        .parse()
+        .map_err(|err| format!("timestamp must be decimal integer ({err})"))?;
+    DateTime::from_timestamp(timestamp, 0).ok_or_else(|| "timestamp out of range".to_string())
+}
+
+/// An in-development feature that may be changed or removed at any time.
+#[derive(Debug, Copy, Clone, Eq, PartialEq, ValueEnum)]
+pub enum Feature {
+    Html,
+    A11yExtras,
+}
+
+/// Arguments for configuration the process of compilation itself.
+#[derive(Debug, Clone, Args)]
+pub struct ProcessArgs {
+    /// Number of parallel jobs spawned during compilation. Defaults to number
+    /// of CPUs. Setting it to 1 disables parallelism.
+    #[clap(long, short)]
+    pub jobs: Option<usize>,
+    #[arg(long = "features", value_delimiter = ',', env = "TYPST_FEATURES")]
+    pub features: Vec<Feature>,
+}
+
+impl SystemWorld {
+    /// Create a new system world.
+    pub fn new(
+        input: &Input,
+        world_args: &WorldArgs,
+        process_args: &ProcessArgs,
+    ) -> Result<Self, WorldCreationError> {
+        // Set up the thread pool.
+        if let Some(jobs) = process_args.jobs {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(jobs)
+                .use_current_thread()
+                .build_global()
+                .ok();
+        }
+
+        // Resolve the system-global input path.
+        let input = match input {
+            Input::Stdin => None,
+            Input::Path(path) => Some(path.canonicalize().map_err(|err| match err.kind() {
+                io::ErrorKind::NotFound => WorldCreationError::InputNotFound(path.clone()),
+                _ => WorldCreationError::Io(err),
+            })?),
+        };
+
+        // Resolve the system-global root directory.
+        let root = {
+            let path = world_args
+                .root
+                .as_deref()
+                .or_else(|| input.as_deref().and_then(|i| i.parent()))
+                .unwrap_or(Path::new("."));
+            path.canonicalize().map_err(|err| match err.kind() {
+                io::ErrorKind::NotFound => WorldCreationError::RootNotFound(path.to_path_buf()),
+                _ => WorldCreationError::Io(err),
+            })?
+        };
+
+        let main = if let Some(path) = &input {
+            // Resolve the virtual path of the main file within the project root.
+            let main_path = VirtualPath::within_root(path, &root)
+                .ok_or(WorldCreationError::InputOutsideRoot)?;
+            FileId::new(None, main_path)
+        } else {
+            // Return the special id of STDIN otherwise
+            *STDIN_ID
+        };
+
+        let library = {
+            // Convert the input pairs to a dictionary.
+            let inputs: Dict = world_args
+                .inputs
+                .iter()
+                .map(|(k, v)| (k.as_str().into(), v.as_str().into_value()))
+                .collect();
+
+            let features = process_args
+                .features
+                .iter()
+                .map(|&feature| match feature {
+                    Feature::Html => typst::Feature::Html,
+                    Feature::A11yExtras => typst::Feature::A11yExtras,
+                })
+                .collect();
+
+            Library::builder()
+                .with_inputs(inputs)
+                .with_features(features)
+                .build()
+        };
+
+        let mut fonts = Fonts::searcher();
+        fonts.include_system_fonts(!world_args.font.ignore_system_fonts);
+        fonts.include_embedded_fonts(true);
+        let fonts = fonts.search_with(&world_args.font.font_paths);
+
+        let now = match world_args.creation_timestamp {
+            Some(time) => Now::Fixed(time),
+            None => Now::System(OnceLock::new()),
+        };
+
+        Ok(Self {
+            workdir: std::env::current_dir().ok(),
+            root,
+            main,
+            library: LazyHash::new(library),
+            book: LazyHash::new(fonts.book),
+            fonts: fonts.fonts,
+            slots: Mutex::new(FxHashMap::default()),
+            package_storage: storage(&world_args.package),
+            now,
+        })
+    }
+
+    /// The id of the main source file.
+    pub fn main(&self) -> FileId {
+        self.main
+    }
+
+    /// The root relative to which absolute paths are resolved.
+    pub fn root(&self) -> &Path {
         &self.root
     }
 
-    fn library(&self) -> &Prehashed<Library> {
-        &self.library
+    /// The current working directory.
+    pub fn workdir(&self) -> &Path {
+        self.workdir.as_deref().unwrap_or(Path::new("."))
     }
 
-    fn main(&self) -> &Source {
-        self.source(self.main)
+    /// Return all paths the last compilation depended on.
+    pub fn dependencies(&mut self) -> impl Iterator<Item = PathBuf> + '_ {
+        self.slots
+            .get_mut()
+            .values()
+            .filter(|slot| slot.accessed())
+            .filter_map(|slot| system_path(&self.root, slot.id, &self.package_storage).ok())
     }
 
-    fn resolve(&self, path: &Path) -> FileResult<SourceId> {
-        self.slot(path)?
-            .source
-            .get_or_init(|| {
-                let buf = read(path)?;
-                let text = String::from_utf8(buf)?;
-                Ok(self.insert(path, text))
-            })
-            .clone()
-    }
-
-    fn source(&self, id: SourceId) -> &Source {
-        &self.sources[id.into_u16() as usize]
-    }
-
-    fn book(&self) -> &Prehashed<FontBook> {
-        &self.book
-    }
-
-    fn font(&self, id: usize) -> Option<Font> {
-        let slot = &self.fonts[id];
-        slot.font
-            .get_or_init(|| {
-                let data = self.file(&slot.path).ok()?;
-                Font::new(data, slot.index)
-            })
-            .clone()
-    }
-
-    fn file(&self, path: &Path) -> FileResult<Buffer> {
-        self.slot(path)?
-            .buffer
-            .get_or_init(|| read(path).map(Buffer::from))
-            .clone()
-    }
-}
-
-impl SystemWorld {
-    fn slot(&self, path: &Path) -> FileResult<RefMut<'_, PathSlot>> {
-        let mut hashes = self.hashes.borrow_mut();
-        let hash = match hashes.get(path).cloned() {
-            Some(hash) => hash,
-            None => {
-                let hash = PathHash::new(path);
-                if let Ok(canon) = path.canonicalize() {
-                    hashes.insert(canon.normalize(), hash.clone());
-                }
-                hashes.insert(path.into(), hash.clone());
-                hash
-            }
-        }?;
-
-        Ok(std::cell::RefMut::map(self.paths.borrow_mut(), |paths| {
-            paths.entry(hash).or_default()
-        }))
-    }
-
-    fn insert(&self, path: &Path, text: String) -> SourceId {
-        let id = SourceId::from_u16(self.sources.len() as u16);
-        let source = Source::new(id, path, text);
-        self.sources.push(Box::new(source));
-        id
-    }
-
-    fn relevant(&mut self, event: &notify::Event) -> bool {
-        match &event.kind {
-            notify::EventKind::Any => {}
-            notify::EventKind::Access(_) => return false,
-            notify::EventKind::Create(_) => return true,
-            notify::EventKind::Modify(kind) => match kind {
-                notify::event::ModifyKind::Any => {}
-                notify::event::ModifyKind::Data(_) => {}
-                notify::event::ModifyKind::Metadata(_) => return false,
-                notify::event::ModifyKind::Name(_) => return true,
-                notify::event::ModifyKind::Other => return false,
-            },
-            notify::EventKind::Remove(_) => {}
-            notify::EventKind::Other => return false,
+    /// Reset the compilation state in preparation of a new compilation.
+    pub fn reset(&mut self) {
+        #[allow(clippy::iter_over_hash_type, reason = "order does not matter")]
+        for slot in self.slots.get_mut().values_mut() {
+            slot.reset();
         }
-
-        event.paths.iter().any(|path| self.dependant(path))
+        if let Now::System(time_lock) = &mut self.now {
+            time_lock.take();
+        }
     }
 
-    fn dependant(&self, path: &Path) -> bool {
-        self.hashes.borrow().contains_key(&path.normalize())
-            || PathHash::new(path).map_or(false, |hash| self.paths.borrow().contains_key(&hash))
-    }
-
-    fn reset(&mut self) {
-        self.sources.as_mut().clear();
-        self.hashes.borrow_mut().clear();
-        self.paths.borrow_mut().clear();
-    }
-}
-
-/// A hash that is the same for all paths pointing to the same entity.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, Hash)]
-struct PathHash(u128);
-
-impl PathHash {
-    fn new(path: &Path) -> FileResult<Self> {
-        let f = |e| FileError::from_io(e, path);
-        let handle = Handle::from_path(path).map_err(f)?;
-        let mut state = SipHasher::new();
-        handle.hash(&mut state);
-        Ok(Self(state.finish128().as_u128()))
-    }
-}
-
-/// Read a file.
-fn read(path: &Path) -> FileResult<Vec<u8>> {
-    let f = |e| FileError::from_io(e, path);
-    if fs::metadata(&path).map_err(f)?.is_dir() {
-        Err(FileError::IsDirectory)
-    } else {
-        fs::read(&path).map_err(f)
-    }
-}
-
-impl<'a> codespan_reporting::files::Files<'a> for SystemWorld {
-    type FileId = SourceId;
-    type Name = std::path::Display<'a>;
-    type Source = &'a str;
-
-    fn name(&'a self, id: SourceId) -> CodespanResult<Self::Name> {
-        Ok(World::source(self, id).path().display())
-    }
-
-    fn source(&'a self, id: SourceId) -> CodespanResult<Self::Source> {
-        Ok(World::source(self, id).text())
-    }
-
-    fn line_index(&'a self, id: SourceId, given: usize) -> CodespanResult<usize> {
-        let source = World::source(self, id);
-        source
-            .byte_to_line(given)
-            .ok_or_else(|| CodespanError::IndexTooLarge {
-                given,
-                max: source.len_bytes(),
-            })
-    }
-
-    fn line_range(&'a self, id: SourceId, given: usize) -> CodespanResult<std::ops::Range<usize>> {
-        let source = World::source(self, id);
-        source
-            .line_to_range(given)
-            .ok_or_else(|| CodespanError::LineTooLarge {
-                given,
-                max: source.len_lines(),
-            })
-    }
-
-    fn column_number(&'a self, id: SourceId, _: usize, given: usize) -> CodespanResult<usize> {
-        let source = World::source(self, id);
-        source.byte_to_column(given).ok_or_else(|| {
-            let max = source.len_bytes();
-            if given <= max {
-                CodespanError::InvalidCharBoundary { given }
+    /// Lookup line metadata for a file by id.
+    #[track_caller]
+    pub fn lookup(&self, id: FileId) -> Lines<String> {
+        self.slot(id, |slot| {
+            if let Some(source) = slot.source.get() {
+                let source = source.as_ref().expect("file is not valid");
+                source.lines().clone()
+            } else if let Some(bytes) = slot.file.get() {
+                let bytes = bytes.as_ref().expect("file is not valid");
+                Lines::try_from(bytes).expect("file is not valid utf-8")
             } else {
-                CodespanError::IndexTooLarge { given, max }
+                panic!("file id does not point to any source file");
             }
         })
     }
 }
 
-/// Searches for fonts.
-struct FontSearcher {
-    book: FontBook,
-    fonts: Vec<FontSlot>,
-}
-
-impl FontSearcher {
-    /// Create a new, empty system searcher.
-    fn new() -> Self {
-        Self {
-            book: FontBook::new(),
-            fonts: vec![],
-        }
+impl World for SystemWorld {
+    fn library(&self) -> &LazyHash<Library> {
+        &self.library
     }
 
-    /// Add fonts that are embedded in the binary.
-    #[cfg(feature = "embed-fonts")]
-    fn add_embedded(&mut self) {
-        let mut add = |bytes: &'static [u8]| {
-            let buffer = Buffer::from_static(bytes);
-            for (i, font) in Font::iter(buffer).enumerate() {
-                self.book.push(font.info().clone());
-                self.fonts.push(FontSlot {
-                    path: PathBuf::new(),
-                    index: i as u32,
-                    font: OnceCell::from(Some(font)),
-                });
+    fn book(&self) -> &LazyHash<FontBook> {
+        &self.book
+    }
+
+    fn main(&self) -> FileId {
+        self.main
+    }
+
+    fn source(&self, id: FileId) -> FileResult<Source> {
+        self.slot(id, |slot| slot.source(&self.root, &self.package_storage))
+    }
+
+    fn file(&self, id: FileId) -> FileResult<Bytes> {
+        self.slot(id, |slot| slot.file(&self.root, &self.package_storage))
+    }
+
+    fn font(&self, index: usize) -> Option<Font> {
+        // comemo's validation may invoke this function with an invalid index. This is
+        // impossible in typst-cli but possible if a custom tool mutates the fonts.
+        self.fonts.get(index)?.get()
+    }
+
+    fn today(&self, offset: Option<i64>) -> Option<Datetime> {
+        let now = match &self.now {
+            Now::Fixed(time) => time,
+            Now::System(time) => time.get_or_init(Utc::now),
+        };
+
+        // The time with the specified UTC offset, or within the local time zone.
+        let with_offset = match offset {
+            None => now.with_timezone(&Local).fixed_offset(),
+            Some(hours) => {
+                let seconds = i32::try_from(hours).ok()?.checked_mul(3600)?;
+                now.with_timezone(&FixedOffset::east_opt(seconds)?)
             }
         };
 
-        // Embed default fonts.
-        add(include_bytes!(
-            "../../typst/assets/fonts/LinLibertine_R.ttf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/LinLibertine_RB.ttf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/LinLibertine_RBI.ttf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/LinLibertine_RI.ttf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/NewCMMath-Book.otf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/NewCMMath-Regular.otf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/DejaVuSansMono.ttf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/DejaVuSansMono-Bold.ttf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/DejaVuSansMono-Oblique.ttf"
-        ));
-        add(include_bytes!(
-            "../../typst/assets/fonts/DejaVuSansMono-BoldOblique.ttf"
-        ));
+        Datetime::from_ymd(
+            with_offset.year(),
+            with_offset.month().try_into().ok()?,
+            with_offset.day().try_into().ok()?,
+        )
     }
+}
 
-    /// Search for fonts in the linux system font directories.
-    #[cfg(all(unix, not(target_os = "macos")))]
-    fn search_system(&mut self) {
-        self.search_dir("/usr/share/fonts");
-        self.search_dir("/usr/local/share/fonts");
+impl SystemWorld {
+    /// Access the canonical slot for the given file id.
+    fn slot<F, T>(&self, id: FileId, f: F) -> T
+    where
+        F: FnOnce(&mut FileSlot) -> T,
+    {
+        let mut map = self.slots.lock();
+        f(map.entry(id).or_insert_with(|| FileSlot::new(id)))
+    }
+}
 
-        if let Some(dir) = dirs::font_dir() {
-            self.search_dir(dir);
+/// Holds the processed data for a file ID.
+///
+/// Both fields can be populated if the file is both imported and read().
+struct FileSlot {
+    /// The slot's file id.
+    id: FileId,
+    /// The lazily loaded and incrementally updated source file.
+    source: SlotCell<Source>,
+    /// The lazily loaded raw byte buffer.
+    file: SlotCell<Bytes>,
+}
+
+impl FileSlot {
+    /// Create a new file slot.
+    fn new(id: FileId) -> Self {
+        Self {
+            id,
+            file: SlotCell::new(),
+            source: SlotCell::new(),
         }
     }
 
-    #[cfg(target_arch = "wasm32")]
-    fn search_system(&mut self) {}
-
-    /// Search for fonts in the macOS system font directories.
-    #[cfg(target_os = "macos")]
-    fn search_system(&mut self) {
-        self.search_dir("/Library/Fonts");
-        self.search_dir("/Network/Library/Fonts");
-        self.search_dir("/System/Library/Fonts");
-
-        if let Some(dir) = dirs::font_dir() {
-            self.search_dir(dir);
-        }
+    /// Whether the file was accessed in the ongoing compilation.
+    fn accessed(&self) -> bool {
+        self.source.accessed() || self.file.accessed()
     }
 
-    /// Search for fonts in the Windows system font directories.
-    #[cfg(windows)]
-    fn search_system(&mut self) {
-        let windir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".to_string());
-
-        self.search_dir(Path::new(&windir).join("Fonts"));
-
-        if let Some(roaming) = dirs::config_dir() {
-            self.search_dir(roaming.join("Microsoft\\Windows\\Fonts"));
-        }
-
-        if let Some(local) = dirs::cache_dir() {
-            self.search_dir(local.join("Microsoft\\Windows\\Fonts"));
-        }
+    /// Marks the file as not yet accessed in preparation of the next
+    /// compilation.
+    fn reset(&mut self) {
+        self.source.reset();
+        self.file.reset();
     }
 
-    /// Search for all fonts in a directory recursively.
-    fn search_dir(&mut self, path: impl AsRef<Path>) {
-        for entry in WalkDir::new(path)
-            .follow_links(true)
-            .sort_by(|a, b| a.file_name().cmp(b.file_name()))
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path();
-            if matches!(
-                path.extension().and_then(|s| s.to_str()),
-                Some("ttf" | "otf" | "TTF" | "OTF" | "ttc" | "otc" | "TTC" | "OTC"),
-            ) {
-                self.search_file(path);
-            }
-        }
-    }
-
-    /// Index the fonts in the file at the given path.
-    fn search_file(&mut self, path: impl AsRef<Path>) {
-        let path = path.as_ref();
-        if let Ok(file) = File::open(path) {
-            if let Ok(mmap) = unsafe { Mmap::map(&file) } {
-                for (i, info) in FontInfo::iter(&mmap).enumerate() {
-                    self.book.push(info);
-                    self.fonts.push(FontSlot {
-                        path: path.into(),
-                        index: i as u32,
-                        font: OnceCell::new(),
-                    });
+    /// Retrieve the source for this file.
+    fn source(
+        &mut self,
+        project_root: &Path,
+        package_storage: &PackageStorage,
+    ) -> FileResult<Source> {
+        self.source.get_or_init(
+            || read(self.id, project_root, package_storage),
+            |data, prev| {
+                let text = decode_utf8(&data)?;
+                if let Some(mut prev) = prev {
+                    prev.replace(text);
+                    Ok(prev)
+                } else {
+                    Ok(Source::new(self.id, text.into()))
                 }
-            }
+            },
+        )
+    }
+
+    /// Retrieve the file's bytes.
+    fn file(&mut self, project_root: &Path, package_storage: &PackageStorage) -> FileResult<Bytes> {
+        self.file.get_or_init(
+            || read(self.id, project_root, package_storage),
+            |data, _| Ok(Bytes::new(data)),
+        )
+    }
+}
+
+/// Decode UTF-8 with an optional BOM.
+fn decode_utf8(buf: &[u8]) -> FileResult<&str> {
+    // Remove UTF-8 BOM.
+    Ok(std::str::from_utf8(
+        buf.strip_prefix(b"\xef\xbb\xbf").unwrap_or(buf),
+    )?)
+}
+
+/// Reads a file from a `FileId`.
+///
+/// If the ID represents stdin it will read from standard input,
+/// otherwise it gets the file path of the ID and reads the file from disk.
+fn read(id: FileId, project_root: &Path, package_storage: &PackageStorage) -> FileResult<Vec<u8>> {
+    if id == *STDIN_ID {
+        read_from_stdin()
+    } else {
+        read_from_disk(&system_path(project_root, id, package_storage)?)
+    }
+}
+
+/// Resolves the path of a file id on the system, downloading a package if
+/// necessary.
+fn system_path(
+    project_root: &Path,
+    id: FileId,
+    package_storage: &PackageStorage,
+) -> FileResult<PathBuf> {
+    // Determine the root path relative to which the file path
+    // will be resolved.
+
+    let mut root = project_root;
+
+    // Join the path to the root. If it tries to escape, deny
+    // access. Note: It can still escape via symlinks.
+    id.vpath().resolve(root).ok_or(FileError::AccessDenied)
+}
+
+/// Read a file from disk.
+fn read_from_disk(path: &Path) -> FileResult<Vec<u8>> {
+    let f = |e| FileError::from_io(e, path);
+    if fs::metadata(path).map_err(f)?.is_dir() {
+        Err(FileError::IsDirectory)
+    } else {
+        fs::read(path).map_err(f)
+    }
+}
+
+/// Read from stdin.
+fn read_from_stdin() -> FileResult<Vec<u8>> {
+    let mut buf = Vec::new();
+    let result = io::stdin().read_to_end(&mut buf);
+    match result {
+        Ok(_) => (),
+        Err(err) if err.kind() == io::ErrorKind::BrokenPipe => (),
+        Err(err) => return Err(FileError::from_io(err, Path::new("<stdin>"))),
+    }
+    Ok(buf)
+}
+
+static STDIN_ID: LazyLock<FileId> = LazyLock::new(|| FileId::new_fake(VirtualPath::new("<stdin>")));
+
+/// Lazily processes data for a file.
+struct SlotCell<T> {
+    /// The processed data.
+    data: Option<FileResult<T>>,
+    /// A hash of the raw file contents / access error.
+    fingerprint: u128,
+    /// Whether the slot has been accessed in the current compilation.
+    accessed: bool,
+}
+
+impl<T: Clone> SlotCell<T> {
+    /// Creates a new, empty cell.
+    fn new() -> Self {
+        Self {
+            data: None,
+            fingerprint: 0,
+            accessed: false,
         }
     }
+
+    /// Whether the cell was accessed in the ongoing compilation.
+    fn accessed(&self) -> bool {
+        self.accessed
+    }
+
+    /// Marks the cell as not yet accessed in preparation of the next
+    /// compilation.
+    fn reset(&mut self) {
+        self.accessed = false;
+    }
+
+    /// Gets the contents of the cell.
+    fn get(&self) -> Option<&FileResult<T>> {
+        self.data.as_ref()
+    }
+
+    /// Gets the contents of the cell or initialize them.
+    fn get_or_init(
+        &mut self,
+        load: impl FnOnce() -> FileResult<Vec<u8>>,
+        f: impl FnOnce(Vec<u8>, Option<T>) -> FileResult<T>,
+    ) -> FileResult<T> {
+        // If we accessed the file already in this compilation, retrieve it.
+        if mem::replace(&mut self.accessed, true)
+            && let Some(data) = &self.data
+        {
+            return data.clone();
+        }
+
+        // Read and hash the file.
+        let result = timed!("loading file", load());
+        let fingerprint = timed!("hashing file", typst::utils::hash128(&result));
+
+        // If the file contents didn't change, yield the old processed data.
+        if mem::replace(&mut self.fingerprint, fingerprint) == fingerprint
+            && let Some(data) = &self.data
+        {
+            return data.clone();
+        }
+
+        let prev = self.data.take().and_then(Result::ok);
+        let value = result.and_then(|data| f(data, prev));
+        self.data = Some(value.clone());
+
+        value
+    }
+}
+
+mod sealed {
+    use typst_library::foundations::{Content, Target};
+
+    use super::*;
+
+    pub trait Sealed: Sized {
+        const TARGET: Target;
+
+        fn create(engine: &mut Engine, content: &Content, styles: StyleChain)
+        -> SourceResult<Self>;
+    }
+
+    impl Sealed for PagedDocument {
+        const TARGET: Target = Target::Paged;
+
+        fn create(
+            engine: &mut Engine,
+            content: &Content,
+            styles: StyleChain,
+        ) -> SourceResult<Self> {
+            typst_layout::layout_document(engine, content, styles)
+        }
+    }
+
+    impl Sealed for HtmlDocument {
+        const TARGET: Target = Target::Html;
+
+        fn create(
+            engine: &mut Engine,
+            content: &Content,
+            styles: StyleChain,
+        ) -> SourceResult<Self> {
+            typst_html::html_document(engine, content, styles)
+        }
+    }
+}
+
+/// A document is what results from compilation.
+pub trait Document: sealed::Sealed {
+    /// Get the document's metadata.
+    fn info(&self) -> &DocumentInfo;
+
+    /// Get the document's introspector.
+    fn introspector(&self) -> &Introspector;
+}
+
+impl Document for PagedDocument {
+    fn info(&self) -> &DocumentInfo {
+        &self.info
+    }
+
+    fn introspector(&self) -> &Introspector {
+        &self.introspector
+    }
+}
+
+impl Document for HtmlDocument {
+    fn info(&self) -> &DocumentInfo {
+        &self.info
+    }
+
+    fn introspector(&self) -> &Introspector {
+        &self.introspector
+    }
+}
+
+fn compile_impl<D: Document>(
+    world: Tracked<dyn World + '_>,
+    traced: Tracked<Traced>,
+    sink: &mut Sink,
+) -> SourceResult<D> {
+    let library = world.library();
+    let base = StyleChain::new(&library.styles);
+    let target = TargetElem::target.set(D::TARGET).wrap();
+    let styles = base.chain(&target);
+    let empty_introspector = Introspector::default();
+
+    // Fetch the main source file once.
+    let main = world.main();
+    let main = world.source(main).unwrap();
+
+    // First evaluate the main source file into a module.
+    let content = typst_eval::eval(
+        &ROUTINES,
+        world,
+        traced,
+        sink.track_mut(),
+        Route::default().track(),
+        &main,
+    )?
+    .content();
+
+    let mut iter = 0;
+    let mut subsink;
+    let mut introspector = &empty_introspector;
+    let mut document: D;
+
+    // Relayout until all introspections stabilize.
+    // If that doesn't happen within five attempts, we give up.
+    loop {
+        // The name of the iterations for timing scopes.
+        const ITER_NAMES: &[&str] = &[
+            "layout (1)",
+            "layout (2)",
+            "layout (3)",
+            "layout (4)",
+            "layout (5)",
+        ];
+
+        subsink = Sink::new();
+
+        let constraint = comemo::Constraint::new();
+        let mut engine = Engine {
+            world,
+            introspector: introspector.track_with(&constraint),
+            traced,
+            sink: subsink.track_mut(),
+            route: Route::default(),
+            routines: &ROUTINES,
+        };
+
+        // Layout!
+        document = D::create(&mut engine, &content, styles)?;
+        introspector = document.introspector();
+        iter += 1;
+
+        if iter >= 5 {
+            eprintln!(
+                "layout did not converge within 5 attempts. check if any states or queries are updating themselves"
+            );
+            break;
+        }
+    }
+
+    sink.extend_from_sink(subsink);
+
+    // Promote delayed errors.
+    let delayed = sink.delayed();
+    if !delayed.is_empty() {
+        return Err(delayed);
+    }
+
+    Ok(document)
+}
+
+pub static ROUTINES: LazyLock<Routines> = LazyLock::new(|| Routines {
+    rules: {
+        let mut rules = NativeRuleMap::new();
+        typst_layout::register(&mut rules);
+        typst_html::register(&mut rules);
+        rules
+    },
+    eval_string: typst_eval::eval_string,
+    eval_closure: typst_eval::eval_closure,
+    realize: typst_realize::realize,
+    layout_frame: typst_layout::layout_frame,
+    html_module: typst_html::module,
+    html_span_filled: typst_html::html_span_filled,
+});
+
+#[derive(Debug, Clone)]
+pub enum Input {
+    /// Stdin, represented by `-`.
+    Stdin,
+    /// A non-empty path.
+    Path(PathBuf),
+}
+
+#[derive(Debug, Clone)]
+pub enum Output {
+    /// Stdout, represented by `-`.
+    Stdout,
+    /// A non-empty path.
+    Path(PathBuf),
+}
+
+/// A step-by-step writable version of [`Output`].
+#[derive(Debug)]
+pub enum OpenOutput<'a> {
+    Stdout(std::io::StdoutLock<'a>),
+    File(std::fs::File),
+}
+
+impl Output {
+    /// Write data to the output.
+    pub fn write(&self, buffer: &[u8]) -> std::io::Result<()> {
+        match self {
+            Output::Stdout => std::io::stdout().write_all(buffer),
+            Output::Path(path) => std::fs::write(path, buffer),
+        }
+    }
+
+    /// Open the output for writing.
+    pub fn open(&self) -> std::io::Result<OpenOutput<'_>> {
+        match self {
+            Self::Stdout => Ok(OpenOutput::Stdout(std::io::stdout().lock())),
+            Self::Path(path) => std::fs::File::create(path).map(OpenOutput::File),
+        }
+    }
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd)]
+pub enum OutputFormat {
+    Pdf,
+    Png,
+    Svg,
+    Html,
+}
+
+#[derive(Debug, Default, Copy, Clone, Eq, PartialEq)]
+pub enum DepsFormat {
+    /// Encodes as JSON, failing for non-Unicode paths.
+    #[default]
+    Json,
+    /// Separates paths with NULL bytes and can express all paths.
+    Zero,
+    /// Emits in Make format, omitting inexpressible paths.
+    Make,
+}
+
+/// A preprocessed `CompileCommand`.
+pub struct CompileConfig {
+    /// Static warnings to emit after compilation.
+    pub warnings: Vec<HintedString>,
+    /// Whether we are watching.
+    pub watching: bool,
+    /// Path to input Typst file or stdin.
+    pub input: Input,
+    /// Path to output file (PDF, PNG, SVG, or HTML).
+    pub output: Output,
+    /// The format of the output file.
+    pub output_format: OutputFormat,
+    /// Which pages to export.
+    pub pages: Option<PageRanges>,
+    /// The document's creation date formatted as a UNIX timestamp, with UTC suffix.
+    pub creation_timestamp: Option<DateTime<Utc>>,
+    /// Opens the output file with the default viewer or a specific program after
+    /// compilation.
+    pub open: Option<Option<String>>,
+    /// A list of standards the PDF should conform to.
+    pub pdf_standards: PdfStandards,
+    /// Whether to write PDF (accessibility) tags.
+    pub tagged: bool,
+    /// A destination to write a list of dependencies to.
+    pub deps: Option<Output>,
+    /// The format to use for dependencies.
+    pub deps_format: DepsFormat,
+    /// The PPI (pixels per inch) to use for PNG export.
+    pub ppi: f32,
+}
+
+/// Export to HTML.
+fn export_html(document: &HtmlDocument, config: &CompileConfig) -> SourceResult<()> {
+    let html = typst_html::html(document)?;
+    let result = config.output.write(html.as_bytes());
+
+    result
+        .map_err(|err| eco_format!("failed to write HTML file ({err})"))
+        .at(Span::detached())
+}
+
+/// Export to one or multiple images.
+fn export_image(
+    document: &PagedDocument,
+    config: &CompileConfig,
+    fmt: ImageExportFormat,
+) -> StrResult<Vec<Output>> {
+    // Determine whether we have indexable templates in output
+    let can_handle_multiple = match config.output {
+        Output::Stdout => false,
+        Output::Path(ref output) => {
+            output_template::has_indexable_template(output.to_str().unwrap_or_default())
+        }
+    };
+
+    let exported_pages = document
+        .pages
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| {
+            config
+                .pages
+                .as_ref()
+                .is_none_or(|exported_page_ranges| exported_page_ranges.includes_page_index(*i))
+        })
+        .collect::<Vec<_>>();
+
+    if !can_handle_multiple && exported_pages.len() > 1 {
+        let err = match config.output {
+            Output::Stdout => "to stdout",
+            Output::Path(_) => "without a page number template ({p}, {0p}) in the output path",
+        };
+        bail!("cannot export multiple images {err}");
+    }
+
+    // The results are collected in a `Vec<()>` which does not allocate.
+    exported_pages
+        .par_iter()
+        .map(|(i, page)| {
+            // Use output with converted path.
+            let output = match &config.output {
+                Output::Path(path) => {
+                    let storage;
+                    let path = if can_handle_multiple {
+                        storage = output_template::format(
+                            path.to_str().unwrap_or_default(),
+                            i + 1,
+                            document.pages.len(),
+                        );
+                        Path::new(&storage)
+                    } else {
+                        path
+                    };
+
+                    Output::Path(path.to_owned())
+                }
+                Output::Stdout => Output::Stdout,
+            };
+
+            export_image_page(config, page, &output, fmt)?;
+            Ok(output)
+        })
+        .collect::<StrResult<Vec<Output>>>()
+}
+
+mod output_template {
+    const INDEXABLE: [&str; 3] = ["{p}", "{0p}", "{n}"];
+
+    pub fn has_indexable_template(output: &str) -> bool {
+        INDEXABLE.iter().any(|template| output.contains(template))
+    }
+
+    pub fn format(output: &str, this_page: usize, total_pages: usize) -> String {
+        // Find the base 10 width of number `i`
+        fn width(i: usize) -> usize {
+            1 + i.checked_ilog10().unwrap_or(0) as usize
+        }
+
+        let other_templates = ["{t}"];
+        INDEXABLE
+            .iter()
+            .chain(other_templates.iter())
+            .fold(output.to_string(), |out, template| {
+                let replacement = match *template {
+                    "{p}" => format!("{this_page}"),
+                    "{0p}" | "{n}" => format!("{:01$}", this_page, width(total_pages)),
+                    "{t}" => format!("{total_pages}"),
+                    _ => unreachable!("unhandled template placeholder {template}"),
+                };
+                out.replace(template, replacement.as_str())
+            })
+    }
+}
+fn export_image_page(
+    config: &CompileConfig,
+    page: &Page,
+    output: &Output,
+    fmt: ImageExportFormat,
+) -> StrResult<()> {
+    match fmt {
+        ImageExportFormat::Png => {
+            let pixmap = typst_render::render(page, config.ppi / 72.0);
+            let buf = pixmap
+                .encode_png()
+                .map_err(|err| eco_format!("failed to encode PNG file ({err})"))?;
+            output
+                .write(&buf)
+                .map_err(|err| eco_format!("failed to write PNG file ({err})"))?;
+        }
+        ImageExportFormat::Svg => {
+            let svg = typst_svg::svg(page);
+            output
+                .write(svg.as_bytes())
+                .map_err(|err| eco_format!("failed to write SVG file ({err})"))?;
+        }
+    }
+    Ok(())
+}
+
+/// An image format to export in.
+#[derive(Copy, Clone)]
+enum ImageExportFormat {
+    Png,
+    Svg,
+}
+
+/// Export to a paged target format.
+fn export_paged(document: &PagedDocument, config: &CompileConfig) -> SourceResult<Vec<Output>> {
+    match config.output_format {
+        OutputFormat::Pdf => export_pdf(document, config).map(|()| vec![config.output.clone()]),
+        OutputFormat::Png => {
+            export_image(document, config, ImageExportFormat::Png).at(Span::detached())
+        }
+        OutputFormat::Svg => {
+            export_image(document, config, ImageExportFormat::Svg).at(Span::detached())
+        }
+        OutputFormat::Html => unreachable!(),
+    }
+}
+
+/// Convert [`chrono::DateTime`] to [`Datetime`]
+fn convert_datetime<Tz: chrono::TimeZone>(date_time: chrono::DateTime<Tz>) -> Option<Datetime> {
+    Datetime::from_ymd_hms(
+        date_time.year(),
+        date_time.month().try_into().ok()?,
+        date_time.day().try_into().ok()?,
+        date_time.hour().try_into().ok()?,
+        date_time.minute().try_into().ok()?,
+        date_time.second().try_into().ok()?,
+    )
+}
+
+/// Export to a PDF.
+fn export_pdf(document: &PagedDocument, config: &CompileConfig) -> SourceResult<()> {
+    // If the timestamp is provided through the CLI, use UTC suffix,
+    // else, use the current local time and timezone.
+    let timestamp = match config.creation_timestamp {
+        Some(timestamp) => convert_datetime(timestamp).map(Timestamp::new_utc),
+        None => {
+            let local_datetime = chrono::Local::now();
+            convert_datetime(local_datetime).and_then(|datetime| {
+                Timestamp::new_local(datetime, local_datetime.offset().local_minus_utc() / 60)
+            })
+        }
+    };
+
+    let options = PdfOptions {
+        ident: Smart::Auto,
+        timestamp,
+        page_ranges: config.pages.clone(),
+        standards: config.pdf_standards.clone(),
+        tagged: config.tagged,
+    };
+    let buffer = typst_pdf::pdf(document, &options)?;
+    config
+        .output
+        .write(&buffer)
+        .map_err(|err| eco_format!("failed to write PDF file ({err})"))
+        .at(Span::detached())?;
+    Ok(())
 }

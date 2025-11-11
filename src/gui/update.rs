@@ -1,17 +1,16 @@
 use super::hash_u64;
 use super::shapes::Shapes as _;
 use super::text::Text as _;
-use super::{collect_font_from_frame, MyApp};
+use super::{MyApp, collect_font_from_frame};
 use eframe::egui;
-use egui::containers::Frame;
 use egui::DroppedFile;
+use egui::containers::Frame;
 use egui::{Color32, FontFamily, Ui};
-use typst::doc::FrameItem::{Group, Image, Meta, Shape, Text};
-use typst::doc::{Frame as TypstFrame, TextItem};
-use typst::geom;
-use typst::geom::Geometry::Line;
-use typst::geom::Paint::Solid;
-use typst::geom::Point;
+use typst::visualize::Color;
+use typst_library::layout::FrameItem::{Group, Image, Shape, Text};
+use typst_library::layout::{Frame as TypstFrame, Point};
+use typst_library::text::TextItem;
+use typst_library::visualize::{Geometry::Line, Paint::Solid, Shape as TypstShape};
 
 fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
     // if display {
@@ -35,10 +34,13 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
     let font_name = format!("font-{}", font_hash);
     let family = FontFamily::Name(font_name.clone().into());
 
-    let Solid(color) = text.fill;
-    let rgba_color = color.to_rgba();
+    let color = match text.fill {
+        Solid(color) => color,
+        _ => Color::BLACK,
+    };
+    let rgb_color = color.to_rgb();
 
-    let content = text.glyphs.iter().map(|x| x.c).collect::<String>();
+    let content = text.text.as_str();
 
     if display {
         println!(
@@ -48,7 +50,7 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
             text.size.to_pt(),
             &font_name,
             &content,
-            &rgba_color
+            &rgb_color
         );
     }
 
@@ -58,7 +60,11 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
         point.y.to_pt() as f32,
         text.size.to_pt() as f32,
         family,
-        Color32::from_rgba_unmultiplied(rgba_color.r, rgba_color.g, rgba_color.b, rgba_color.a),
+        Color32::from_rgb(
+            (rgb_color.red * 256.0) as _,
+            (rgb_color.green * 256.0) as _,
+            (rgb_color.blue * 256.0) as _,
+        ),
     );
 }
 
@@ -85,7 +91,7 @@ fn render_frame(
             Text(text) => render_text(ui, text, origin, display),
             Group(group) => render_frame(ui, &group.frame, origin, display, line_count),
             Shape(
-                geom::Shape {
+                TypstShape {
                     geometry: Line(line_to),
                     stroke: Some(stroke),
                     ..
@@ -96,7 +102,10 @@ fn render_frame(
                 if *line_count > 23 {
                     return;
                 }
-                let Solid(color) = stroke.paint;
+                let color = match stroke.paint {
+                    Solid(color) => color,
+                    _ => Color::BLACK,
+                };
                 // println!("origin {:?}", origin);
                 let dst = *line_to + origin;
                 // println!("origin {:?}", origin);
@@ -123,9 +132,9 @@ fn render_frame(
                     tracing::debug!("image {:?} {:?}", size, span);
                 }
             }
-            Meta(meta, _) => {
+            x => {
                 if display {
-                    tracing::debug!("meta {:?}", meta);
+                    tracing::debug!("wat {:?}", x);
                 }
             }
         }

@@ -5,15 +5,15 @@ mod update;
 use eframe::egui::{FontData, FontDefinitions};
 use eframe::epaint::FontFamily;
 use std::path::PathBuf;
-use typst::doc::Frame;
-use typst::doc::FrameItem::{Group, Text};
+use typst_library::layout::Frame;
+use typst_library::layout::FrameItem::{Group, Text};
 
 use std::sync::Arc;
 
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 
-use ttf_parser::{name_id, Face};
+use ttf_parser::{Face, name_id};
 
 fn hash_u64(data: &[u8]) -> u64 {
     let mut hasher = DefaultHasher::new();
@@ -81,10 +81,7 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
     // }
 
     if let Some(page) = &page {
-        let x = page.width().to_pt() as f32;
-        let y = page.height().to_pt() as f32;
-
-        collect_font_from_frame(&mut font_definitions, page);
+        collect_font_from_frame(&mut font_definitions, &page);
     }
     app.page = page;
 
@@ -100,7 +97,7 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
 }
 
 fn make(c: char, font_data: &[u8]) -> [[char; 64]; 32] {
-    use rusttype::{point, Font, Scale};
+    use rusttype::{Font, Scale, point};
     // This only succeeds if collection consists of one font
     let font = Font::try_from_bytes(font_data).expect("Error constructing Font");
 
