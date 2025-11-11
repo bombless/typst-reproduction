@@ -77,6 +77,12 @@ pub fn main() -> StrResult<()> {
                 .unwrap();
             Ok(())
         }
+        "html" => {
+            Renderer::new()
+                .render_from_path_to_html(&"main.typ".into())
+                .unwrap();
+            Ok(())
+        }
         "render" => render(),
         _ => {
             help();
@@ -143,6 +149,31 @@ impl Renderer {
         };
         export_paged(&doc, &config)?;
         Ok(())
+    }
+    fn render_from_path_to_html(&mut self, path: &PathBuf) -> SourceResult<()> {
+        self.world.main = FileId::new(None, VirtualPath::new(path));
+        let Warned { output, .. } = compile::<HtmlDocument>(&mut self.world);
+        let doc = output.unwrap();
+        let output = Output::Path("main.html".into());
+        let output_format = OutputFormat::Png;
+        let pdf_standards = PdfStandards::default();
+        let deps_format = DepsFormat::default();
+        let config = CompileConfig {
+            warnings: Vec::new(),
+            watching: false,
+            input: Input::Stdin,
+            output,
+            output_format,
+            pages: None,
+            creation_timestamp: None,
+            open: None,
+            pdf_standards,
+            tagged: false,
+            deps: None,
+            deps_format,
+            ppi: 120.0,
+        };
+        export_html(&doc, &config)
     }
     fn render_from_path_to_pdf(&mut self, path: &PathBuf) -> SourceResult<()> {
         self.world.main = FileId::new(None, VirtualPath::new(path));
