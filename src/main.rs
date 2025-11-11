@@ -275,8 +275,6 @@ pub struct PackageArgs {
     pub package_cache_path: Option<PathBuf>,
 }
 
-const ENV_PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
-
 /// Common arguments to customize available fonts.
 #[derive(Debug, Clone)]
 pub struct FontArgs {
@@ -311,33 +309,6 @@ pub struct WorldArgs {
     ///
     /// For more information, see <https://reproducible-builds.org/specs/source-date-epoch/>.
     pub creation_timestamp: Option<DateTime<Utc>>,
-}
-
-fn parse_sys_input_pair(raw: &str) -> Result<(String, String), String> {
-    let (key, val) = raw
-        .split_once('=')
-        .ok_or("input must be a key and a value separated by an equal sign")?;
-    let key = key.trim().to_owned();
-    if key.is_empty() {
-        return Err("the key was missing or empty".to_owned());
-    }
-    let val = val.trim().to_owned();
-    Ok((key, val))
-}
-
-/// Parses a UNIX timestamp according to <https://reproducible-builds.org/specs/source-date-epoch/>
-fn parse_source_date_epoch(raw: &str) -> Result<DateTime<Utc>, String> {
-    let timestamp: i64 = raw
-        .parse()
-        .map_err(|err| format!("timestamp must be decimal integer ({err})"))?;
-    DateTime::from_timestamp(timestamp, 0).ok_or_else(|| "timestamp out of range".to_string())
-}
-
-/// An in-development feature that may be changed or removed at any time.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum Feature {
-    Html,
-    A11yExtras,
 }
 
 /// Arguments for configuration the process of compilation itself.
