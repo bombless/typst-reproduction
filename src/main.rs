@@ -4,14 +4,13 @@ use std::{
     io::{self, Read},
     mem,
 };
-use typst_library::foundations::{NativeRuleMap, StyleChain, Styles, Value};
+use typst_library::foundations::{NativeRuleMap, StyleChain};
 
 use comemo::{Track, Tracked};
 use std::sync::{LazyLock, OnceLock};
 
-use clap::builder::{TypedValueParser, ValueParser};
-use clap::{ArgAction, Args, ColorChoice, Parser, Subcommand, ValueEnum, ValueHint};
-use clap_complete::Shell;
+use clap::builder::ValueParser;
+use clap::{ArgAction, Args, Parser, ValueEnum};
 use typst_kit::{download::Downloader, package::PackageStorage};
 use typst_library::World;
 use typst_library::engine::{Engine, Route, Sink, Traced};
@@ -67,7 +66,15 @@ pub fn main() -> StrResult<()> {
     }
     match args[1].as_str() {
         "compile" => {
-            Renderer.render_from_path(&"main.typ".into());
+            Renderer::new()
+                .render_from_path_to_pdf(&"main.typ".into())
+                .unwrap();
+            Ok(())
+        }
+        "image" => {
+            Renderer::new()
+                .render_from_path_to_image(&"main.typ".into())
+                .unwrap();
             Ok(())
         }
         "render" => render(),
@@ -78,10 +85,12 @@ pub fn main() -> StrResult<()> {
     }
 }
 
-struct Renderer;
+struct Renderer {
+    world: SystemWorld,
+}
 
 impl Renderer {
-    fn render_from_path(&self, path: &PathBuf) -> Frame {
+    fn new() -> Self {
         let font_args: FontArgs = FontArgs {
             font_paths: Vec::new(),
             ignore_system_fonts: false,
@@ -98,12 +107,68 @@ impl Renderer {
             jobs: None,
             features: Vec::new(),
         };
-        let mut world =
-            SystemWorld::new(&Input::Path(path.clone()), &world_args, &process_args).unwrap();
-
-        let Warned { output, .. } = compile::<PagedDocument>(&mut world);
+        Self {
+            world: SystemWorld::new(&Input::Stdin, &world_args, &process_args).unwrap(),
+        }
+    }
+    fn render_from_path(&mut self, path: &PathBuf) -> Frame {
+        println!("render_from_path");
+        self.world.main = FileId::new(None, VirtualPath::new(path));
+        let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
         let doc: PagedDocument = output.unwrap();
         doc.pages.into_iter().next().unwrap().frame
+    }
+    fn render_from_path_to_image(&mut self, path: &PathBuf) -> StrResult<()> {
+        self.world.main = FileId::new(None, VirtualPath::new(path));
+        let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
+        let doc: PagedDocument = output.unwrap();
+        let output = Output::Path("main.png".into());
+        let output_format = OutputFormat::Png;
+        let pdf_standards = PdfStandards::default();
+        let deps_format = DepsFormat::default();
+        let config = CompileConfig {
+            warnings: Vec::new(),
+            watching: false,
+            input: Input::Stdin,
+            output,
+            output_format,
+            pages: None,
+            creation_timestamp: None,
+            open: None,
+            pdf_standards,
+            tagged: false,
+            deps: None,
+            deps_format,
+            ppi: 120.0,
+        };
+        let format = ImageExportFormat::Png;
+        export_image(&doc, &config, format)?;
+        Ok(())
+    }
+    fn render_from_path_to_pdf(&mut self, path: &PathBuf) -> SourceResult<()> {
+        self.world.main = FileId::new(None, VirtualPath::new(path));
+        let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
+        let doc: PagedDocument = output.unwrap();
+        let output = Output::Path("main.pdf".into());
+        let output_format = OutputFormat::Pdf;
+        let pdf_standards = PdfStandards::default();
+        let deps_format = DepsFormat::default();
+        let config = CompileConfig {
+            warnings: Vec::new(),
+            watching: false,
+            input: Input::Stdin,
+            output,
+            output_format,
+            pages: None,
+            creation_timestamp: None,
+            open: None,
+            pdf_standards,
+            tagged: false,
+            deps: None,
+            deps_format,
+            ppi: 32.0,
+        };
+        export_pdf(&doc, &config)
     }
     fn render_from_vec(&self, _: Vec<u8>) -> Frame {
         unimplemented!()
@@ -124,7 +189,7 @@ where
 fn render() -> StrResult<()> {
     let path = Some(PathBuf::from("main.typ"));
 
-    gui::run(path, Renderer);
+    gui::run(path, Renderer::new());
 
     Ok(())
 }
