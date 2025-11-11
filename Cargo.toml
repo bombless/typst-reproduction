@@ -9,8 +9,6 @@ edition = "2024"
 name = "main"
 path = "src/main.rs"
 
-[lib]
-path = "src/main.rs"
 
 
 [dependencies]
