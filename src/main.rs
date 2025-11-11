@@ -35,16 +35,9 @@ use typst_library::introspection::Introspector;
 use std::io::Write;
 
 use chrono::{DateTime, Datelike, Timelike, Utc};
-use codespan_reporting::diagnostic::{Diagnostic, Label};
-use codespan_reporting::term;
 use ecow::eco_format;
-use parking_lot::RwLock;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
-use typst::WorldExt;
-use typst::diag::{
-    At, HintedStrResult, HintedString, Severity, SourceDiagnostic, SourceResult, StrResult, Warned,
-    bail,
-};
+use typst::diag::{At, HintedString, SourceResult, StrResult, Warned, bail};
 use typst::foundations::{Datetime, Smart};
 use typst::layout::{Frame, Page, PageRanges, PagedDocument};
 use typst::syntax::{FileId, Lines, Source, Span, VirtualPath};
@@ -530,7 +523,7 @@ impl SystemWorld {
             .get_mut()
             .values()
             .filter(|slot| slot.accessed())
-            .filter_map(|slot| system_path(&self.root, slot.id, &self.package_storage).ok())
+            .filter_map(|slot| system_path(&self.root, slot.id).ok())
     }
 
     /// Reset the compilation state in preparation of a new compilation.
@@ -575,11 +568,11 @@ impl World for SystemWorld {
     }
 
     fn source(&self, id: FileId) -> FileResult<Source> {
-        self.slot(id, |slot| slot.source(&self.root, &self.package_storage))
+        self.slot(id, |slot| slot.source(&self.root))
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
-        self.slot(id, |slot| slot.file(&self.root, &self.package_storage))
+        self.slot(id, |slot| slot.file(&self.root))
     }
 
     fn font(&self, index: usize) -> Option<Font> {
@@ -657,13 +650,9 @@ impl FileSlot {
     }
 
     /// Retrieve the source for this file.
-    fn source(
-        &mut self,
-        project_root: &Path,
-        package_storage: &PackageStorage,
-    ) -> FileResult<Source> {
+    fn source(&mut self, project_root: &Path) -> FileResult<Source> {
         self.source.get_or_init(
-            || read(self.id, project_root, package_storage),
+            || read(self.id, project_root),
             |data, prev| {
                 let text = decode_utf8(&data)?;
                 if let Some(mut prev) = prev {
@@ -677,9 +666,9 @@ impl FileSlot {
     }
 
     /// Retrieve the file's bytes.
-    fn file(&mut self, project_root: &Path, package_storage: &PackageStorage) -> FileResult<Bytes> {
+    fn file(&mut self, project_root: &Path) -> FileResult<Bytes> {
         self.file.get_or_init(
-            || read(self.id, project_root, package_storage),
+            || read(self.id, project_root),
             |data, _| Ok(Bytes::new(data)),
         )
     }
@@ -697,29 +686,22 @@ fn decode_utf8(buf: &[u8]) -> FileResult<&str> {
 ///
 /// If the ID represents stdin it will read from standard input,
 /// otherwise it gets the file path of the ID and reads the file from disk.
-fn read(id: FileId, project_root: &Path, package_storage: &PackageStorage) -> FileResult<Vec<u8>> {
+fn read(id: FileId, project_root: &Path) -> FileResult<Vec<u8>> {
     if id == *STDIN_ID {
         read_from_stdin()
     } else {
-        read_from_disk(&system_path(project_root, id, package_storage)?)
+        read_from_disk(&system_path(project_root, id)?)
     }
 }
 
 /// Resolves the path of a file id on the system, downloading a package if
 /// necessary.
-fn system_path(
-    project_root: &Path,
-    id: FileId,
-    package_storage: &PackageStorage,
-) -> FileResult<PathBuf> {
-    // Determine the root path relative to which the file path
-    // will be resolved.
-
-    let mut root = project_root;
-
+fn system_path(project_root: &Path, id: FileId) -> FileResult<PathBuf> {
     // Join the path to the root. If it tries to escape, deny
     // access. Note: It can still escape via symlinks.
-    id.vpath().resolve(root).ok_or(FileError::AccessDenied)
+    id.vpath()
+        .resolve(project_root)
+        .ok_or(FileError::AccessDenied)
 }
 
 /// Read a file from disk.
