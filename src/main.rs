@@ -876,47 +876,23 @@ fn compile_impl<D: Document>(
     )?
     .content();
 
-    let mut iter = 0;
     let mut subsink;
-    let mut introspector = &empty_introspector;
-    let mut document: D;
+    let introspector = &empty_introspector;
 
-    // Relayout until all introspections stabilize.
-    // If that doesn't happen within five attempts, we give up.
-    loop {
-        // The name of the iterations for timing scopes.
-        const ITER_NAMES: &[&str] = &[
-            "layout (1)",
-            "layout (2)",
-            "layout (3)",
-            "layout (4)",
-            "layout (5)",
-        ];
+    subsink = Sink::new();
 
-        subsink = Sink::new();
+    let constraint = comemo::Constraint::new();
+    let mut engine = Engine {
+        world,
+        introspector: introspector.track_with(&constraint),
+        traced,
+        sink: subsink.track_mut(),
+        route: Route::default(),
+        routines: &ROUTINES,
+    };
 
-        let constraint = comemo::Constraint::new();
-        let mut engine = Engine {
-            world,
-            introspector: introspector.track_with(&constraint),
-            traced,
-            sink: subsink.track_mut(),
-            route: Route::default(),
-            routines: &ROUTINES,
-        };
-
-        // Layout!
-        document = D::create(&mut engine, &content, styles)?;
-        introspector = document.introspector();
-        iter += 1;
-
-        if iter >= 5 {
-            eprintln!(
-                "layout did not converge within 5 attempts. check if any states or queries are updating themselves"
-            );
-            break;
-        }
-    }
+    // Layout!
+    let document = D::create(&mut engine, &content, styles)?;
 
     sink.extend_from_sink(subsink);
 
