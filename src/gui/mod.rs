@@ -43,7 +43,7 @@ struct MyApp {
 }
 
 impl MyApp {
-    fn new(renderer: super::Renderer) -> Self {
+    fn new(renderer: super::Renderer, input: String) -> Self {
         MyApp {
             page: None,
             renderer,
@@ -51,24 +51,34 @@ impl MyApp {
             bytes: None,
             view: View::Text,
             tree: None,
-            input: "#v(100pt)\n#line(length:100%)\n= 你好，世界233".into(),
+            // input: "#v(100pt)\n#line(length:100%)\n= 你好，世界233".into(),
+            input,
             font_definitions: FontDefinitions::empty(),
         }
     }
 }
 
 pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
-    let mut options = eframe::NativeOptions::default();
+    use std::fs::File;
+    use std::io::Read;
 
-    let page = file.map(|x| renderer.render_from_path(&x));
-    let mut app = MyApp::new(renderer);
+    let options = eframe::NativeOptions::default();
+
+    let page = file.as_ref().map(|x| renderer.render_from_path(&x));
+    let input = file.map_or_else(String::new, |x| {
+        let mut f = File::open(x).unwrap();
+        let mut ret = String::new();
+        f.read_to_string(&mut ret).unwrap();
+        ret
+    });
+    let mut app = MyApp::new(renderer, input);
 
     let mut font_definitions = FontDefinitions::default();
-    if page.is_none() && !app.input.is_empty() {
-        let page = app.renderer.render_from_vec(app.input.as_bytes().into());
-        collect_font_from_frame(&mut app.font_definitions, &page);
-        app.page = Some(page);
-    }
+    // if page.is_none() && !app.input.is_empty() {
+    //     let page = app.renderer.render_from_vec(app.input.as_bytes().into());
+    //     collect_font_from_frame(&mut app.font_definitions, &page);
+    //     app.page = Some(page);
+    // }
 
     if let Some(page) = &page {
         let x = page.width().to_pt() as f32;
@@ -76,6 +86,7 @@ pub(crate) fn run(file: Option<PathBuf>, mut renderer: super::Renderer) {
 
         collect_font_from_frame(&mut font_definitions, page);
     }
+    app.page = page;
 
     eframe::run_native(
         "litter typer",
@@ -186,7 +197,7 @@ fn char_in_font(face: &Face, ch: char) -> bool {
     face.glyph_index(ch).is_some()
 }
 
-fn print_font_info(face: &Face) {
+pub fn print_font_info(face: &Face) {
     if face.glyph_index('2').is_none() {
         println!("damn, '2' is not present");
     } else {

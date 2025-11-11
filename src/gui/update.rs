@@ -25,6 +25,11 @@ fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
     //         println!();
     //     }
     // }
+    //
+
+    if display {
+        super::print_font_info(text.font.ttf());
+    }
 
     let font_hash = hash_u64(text.font.data().as_slice());
     let font_name = format!("font-{}", font_hash);
