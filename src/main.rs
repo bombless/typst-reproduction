@@ -117,12 +117,8 @@ impl Renderer {
         let doc: PagedDocument = output.unwrap();
         doc.pages.into_iter().next().unwrap().frame
     }
-    fn render_from_path_to_image(&mut self, path: &PathBuf) -> SourceResult<()> {
-        self.world.main = FileId::new(None, VirtualPath::new(path));
-        let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
-        let doc: PagedDocument = output.unwrap();
-        let output = Output::Path("main.png".into());
-        let output_format = OutputFormat::Png;
+    fn compile_config(output_path: PathBuf, output_format: OutputFormat) -> CompileConfig {
+        let output = Output::Path(output_path);
         let pdf_standards = PdfStandards::default();
         let deps_format = DepsFormat::default();
         let config = CompileConfig {
@@ -140,6 +136,13 @@ impl Renderer {
             deps_format,
             ppi: 120.0,
         };
+        config
+    }
+    fn render_from_path_to_image(&mut self, path: &PathBuf) -> SourceResult<()> {
+        self.world.main = FileId::new(None, VirtualPath::new(path));
+        let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
+        let doc: PagedDocument = output.unwrap();
+        let config = Self::compile_config("main.png".into(), OutputFormat::Png);
         export_paged(&doc, &config)?;
         Ok(())
     }
@@ -147,50 +150,14 @@ impl Renderer {
         self.world.main = FileId::new(None, VirtualPath::new(path));
         let Warned { output, .. } = compile::<HtmlDocument>(&mut self.world);
         let doc = output.unwrap();
-        let output = Output::Path("main.html".into());
-        let output_format = OutputFormat::Png;
-        let pdf_standards = PdfStandards::default();
-        let deps_format = DepsFormat::default();
-        let config = CompileConfig {
-            warnings: Vec::new(),
-            watching: false,
-            input: Input::Stdin,
-            output,
-            output_format,
-            pages: None,
-            creation_timestamp: None,
-            open: None,
-            pdf_standards,
-            tagged: false,
-            deps: None,
-            deps_format,
-            ppi: 120.0,
-        };
+        let config = Self::compile_config("main.html".into(), OutputFormat::Html);
         export_html(&doc, &config)
     }
     fn render_from_path_to_pdf(&mut self, path: &PathBuf) -> SourceResult<()> {
         self.world.main = FileId::new(None, VirtualPath::new(path));
         let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
         let doc: PagedDocument = output.unwrap();
-        let output = Output::Path("main.pdf".into());
-        let output_format = OutputFormat::Pdf;
-        let pdf_standards = PdfStandards::default();
-        let deps_format = DepsFormat::default();
-        let config = CompileConfig {
-            warnings: Vec::new(),
-            watching: false,
-            input: Input::Stdin,
-            output,
-            output_format,
-            pages: None,
-            creation_timestamp: None,
-            open: None,
-            pdf_standards,
-            tagged: false,
-            deps: None,
-            deps_format,
-            ppi: 32.0,
-        };
+        let config = Self::compile_config("main.pdf".into(), OutputFormat::Pdf);
         export_paged(&doc, &config)?;
         Ok(())
     }
