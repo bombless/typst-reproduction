@@ -163,8 +163,8 @@ impl Renderer {
     }
     fn render_from_string(&mut self, data: String) -> Frame {
         let file = FileId::new(None, VirtualPath::new(&PathBuf::new()));
-        let source = Source::new(file, data.clone());
         let fingerprint = hash128(data.as_bytes());
+        let source = Source::new(file, data);
         let slot = FileSlot {
             id: file,
             source: SlotCell {
@@ -173,7 +173,7 @@ impl Renderer {
                 accessed: true,
             },
             file: SlotCell {
-                data: Some(Ok(Bytes::from_string(data))),
+                data: None,
                 fingerprint,
                 accessed: true,
             },
