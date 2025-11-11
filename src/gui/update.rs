@@ -6,12 +6,10 @@ use eframe::egui;
 use egui::DroppedFile;
 use egui::containers::Frame;
 use egui::{Color32, FontFamily, Ui};
-use typst::layout::Abs;
-use typst::visualize::Color;
 use typst_library::layout::FrameItem::{Group, Image, Shape, Text};
-use typst_library::layout::{Frame as TypstFrame, Point};
+use typst_library::layout::{Abs, Frame as TypstFrame, Point};
 use typst_library::text::TextItem;
-use typst_library::visualize::{Geometry::Line, Paint::Solid, Shape as TypstShape};
+use typst_library::visualize::{Color, Geometry::Line, Paint::Solid, Shape as TypstShape};
 
 use std::io::Read;
 

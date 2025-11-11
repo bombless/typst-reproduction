@@ -1,6 +1,6 @@
 use eframe::egui::{Color32, CornerRadius, Pos2, Rect, Stroke, StrokeKind, Ui};
 
-use typst::visualize::Color;
+use typst_library::visualize::Color;
 
 pub trait Shapes {
     fn draw_rectangle_lines(
