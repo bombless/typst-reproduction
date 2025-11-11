@@ -9,9 +9,6 @@ use typst_library::foundations::{NativeRuleMap, StyleChain};
 use comemo::{Track, Tracked};
 use std::sync::{LazyLock, OnceLock};
 
-use clap::builder::ValueParser;
-use clap::{ArgAction, Args, Parser, ValueEnum};
-
 use typst_library::World;
 use typst_library::engine::{Engine, Route, Sink, Traced};
 use typst_library::routines::Routines;
@@ -272,78 +269,50 @@ impl fmt::Display for WorldCreationError {
 }
 
 /// Arguments related to where packages are stored in the system.
-#[derive(Debug, Clone, Args, Default)]
+#[derive(Debug, Clone, Default)]
 pub struct PackageArgs {
     /// Custom path to local packages, defaults to system-dependent location.
-    #[clap(long = "package-path", env = "TYPST_PACKAGE_PATH", value_name = "DIR")]
     pub package_path: Option<PathBuf>,
 
     /// Custom path to package cache, defaults to system-dependent location.
-    #[clap(
-        long = "package-cache-path",
-        env = "TYPST_PACKAGE_CACHE_PATH",
-        value_name = "DIR"
-    )]
     pub package_cache_path: Option<PathBuf>,
 }
 
 const ENV_PATH_SEP: char = if cfg!(windows) { ';' } else { ':' };
 
 /// Common arguments to customize available fonts.
-#[derive(Debug, Clone, Parser)]
+#[derive(Debug, Clone)]
 pub struct FontArgs {
     /// Adds additional directories that are recursively searched for fonts.
     ///
     /// If multiple paths are specified, they are separated by the system's path
     /// separator (`:` on Unix-like systems and `;` on Windows).
-    #[clap(
-        long = "font-path",
-        env = "TYPST_FONT_PATHS",
-        value_name = "DIR",
-        value_delimiter = ENV_PATH_SEP,
-    )]
     pub font_paths: Vec<PathBuf>,
 
     /// Ensures system fonts won't be searched, unless explicitly included via
     /// `--font-path`.
-    #[arg(long, env = "TYPST_IGNORE_SYSTEM_FONTS")]
     pub ignore_system_fonts: bool,
 }
 
 /// Arguments for the construction of a world. Shared by compile, watch, and
 /// query.
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone)]
 pub struct WorldArgs {
     /// Configures the project root (for absolute paths).
-    #[clap(long = "root", env = "TYPST_ROOT", value_name = "DIR")]
     pub root: Option<PathBuf>,
 
     /// Add a string key-value pair visible through `sys.inputs`.
-    #[clap(
-        long = "input",
-        value_name = "key=value",
-        action = ArgAction::Append,
-        value_parser = ValueParser::new(parse_sys_input_pair),
-    )]
     pub inputs: Vec<(String, String)>,
 
     /// Common font arguments.
-    #[clap(flatten)]
     pub font: FontArgs,
 
     /// Arguments related to storage of packages in the system.
-    #[clap(flatten)]
     pub package: PackageArgs,
 
     /// The document's creation date formatted as a UNIX timestamp.
     ///
     /// For more information, see <https://reproducible-builds.org/specs/source-date-epoch/>.
-    #[clap(
-        long = "creation-timestamp",
-        env = "SOURCE_DATE_EPOCH",
-        value_name = "UNIX_TIMESTAMP",
-        value_parser = parse_source_date_epoch,
-    )]
     pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
@@ -368,20 +337,18 @@ fn parse_source_date_epoch(raw: &str) -> Result<DateTime<Utc>, String> {
 }
 
 /// An in-development feature that may be changed or removed at any time.
-#[derive(Debug, Copy, Clone, Eq, PartialEq, ValueEnum)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum Feature {
     Html,
     A11yExtras,
 }
 
 /// Arguments for configuration the process of compilation itself.
-#[derive(Debug, Clone, Args)]
+#[derive(Debug, Clone)]
 pub struct ProcessArgs {
     /// Number of parallel jobs spawned during compilation. Defaults to number
     /// of CPUs. Setting it to 1 disables parallelism.
-    #[clap(long, short)]
     pub jobs: Option<usize>,
-    #[arg(long = "features", value_delimiter = ',', env = "TYPST_FEATURES")]
     pub features: Vec<Feature>,
 }
 
