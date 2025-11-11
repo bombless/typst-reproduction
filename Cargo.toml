@@ -38,7 +38,7 @@ typst-timing = "0.14.0"
 typst-kit = { version = "0.14.0", features = ["embed-fonts"] }
 typst-utils = "0.14.0"
 # typst-library = { path = "../typst/library" }
-walkdir = "2.3.3"
+
 #eframe = "0.21.3"
 #eframe = { path = "../egui-src/crates/eframe" }
 # wasm-bindgen-futures = "0.4"
