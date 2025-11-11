@@ -6,6 +6,7 @@ use eframe::egui;
 use egui::DroppedFile;
 use egui::containers::Frame;
 use egui::{Color32, FontFamily, Ui};
+use typst::layout::Abs;
 use typst::visualize::Color;
 use typst_library::layout::FrameItem::{Group, Image, Shape, Text};
 use typst_library::layout::{Frame as TypstFrame, Point};
@@ -200,7 +201,13 @@ impl eframe::App for MyApp {
 
                 if let Some(page) = &self.page {
                     let mut line_count = 0;
-                    render_frame(ui, page, Point::default(), self.display, &mut line_count);
+                    render_frame(
+                        ui,
+                        page,
+                        Point::new(Abs::pt(0.0), Abs::pt(90.0)),
+                        self.display,
+                        &mut line_count,
+                    );
                     self.display = false;
                 }
             });
