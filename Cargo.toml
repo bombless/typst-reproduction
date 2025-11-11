@@ -44,7 +44,7 @@ typst-utils = "0.14.0"
 # wasm-bindgen-futures = "0.4"
 
 # [target.'cfg(target_arch = "wasm32")'.dependencies]
-base64-url = "2.0.0"
+# base64-url = "2.0.0"
 rusttype = "0.9.3"
 ttf-parser = "0.25.0"
 eframe = "0.33.0"
