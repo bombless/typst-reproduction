@@ -7,7 +7,7 @@ use std::{
 use typst_library::foundations::{NativeRuleMap, StyleChain};
 
 use comemo::{Track, Tracked};
-use std::sync::{LazyLock, OnceLock};
+use std::sync::LazyLock;
 
 use typst_library::World;
 use typst_library::engine::{Engine, Route, Sink, Traced};
@@ -22,14 +22,11 @@ use parking_lot::Mutex;
 use typst_kit::fonts::{FontSlot, Fonts};
 use typst_library::text::{Font, FontBook};
 
-use chrono::offset::{FixedOffset, Local};
-
 use typst_library::foundations::{Bytes, Dict, IntoValue, TargetElem};
 use typst_library::introspection::Introspector;
 
 use std::io::Write;
 
-use chrono::{DateTime, Datelike, Timelike, Utc};
 use ecow::eco_format;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
 use typst_html::HtmlDocument;
@@ -39,7 +36,7 @@ use typst_library::diag::{
 use typst_library::foundations::{Datetime, Smart};
 use typst_library::layout::{Frame, Page, PageRanges, PagedDocument};
 use typst_library::{Library, model::DocumentInfo};
-use typst_pdf::{PdfOptions, PdfStandards, Timestamp};
+use typst_pdf::{PdfOptions, PdfStandards};
 use typst_syntax::{FileId, Lines, Source, Span, VirtualPath};
 
 use typst_utils::{LazyHash, hash128};
@@ -97,7 +94,6 @@ impl Renderer {
             inputs: Vec::new(),
             font: font_args,
             package: package,
-            creation_timestamp: None,
         };
         let process_args = ProcessArgs { jobs: None };
         Self {
@@ -122,7 +118,6 @@ impl Renderer {
             output,
             output_format,
             pages: None,
-            creation_timestamp: None,
             open: None,
             pdf_standards,
             tagged: false,
@@ -216,19 +211,6 @@ pub struct SystemWorld {
     fonts: Vec<FontSlot>,
     /// Maps file ids to source files and buffers.
     slots: Mutex<FxHashMap<FileId, FileSlot>>,
-    /// The current datetime if requested. This is stored here to ensure it is
-    /// always the same within one compilation.
-    /// Reset between compilations if not [`Now::Fixed`].
-    now: Now,
-}
-
-/// The current date and time.
-enum Now {
-    /// The date and time if the environment `SOURCE_DATE_EPOCH` is set.
-    /// Used for reproducible builds.
-    Fixed(DateTime<Utc>),
-    /// The current date and time if the time is not externally fixed.
-    System(OnceLock<DateTime<Utc>>),
 }
 
 /// An error that occurs during world construction.
@@ -304,11 +286,6 @@ pub struct WorldArgs {
 
     /// Arguments related to storage of packages in the system.
     pub package: PackageArgs,
-
-    /// The document's creation date formatted as a UNIX timestamp.
-    ///
-    /// For more information, see <https://reproducible-builds.org/specs/source-date-epoch/>.
-    pub creation_timestamp: Option<DateTime<Utc>>,
 }
 
 /// Arguments for configuration the process of compilation itself.
@@ -383,11 +360,6 @@ impl SystemWorld {
         fonts.include_embedded_fonts(true);
         let fonts = fonts.search_with(&world_args.font.font_paths);
 
-        let now = match world_args.creation_timestamp {
-            Some(time) => Now::Fixed(time),
-            None => Now::System(OnceLock::new()),
-        };
-
         Ok(Self {
             workdir: std::env::current_dir().ok(),
             root,
@@ -396,7 +368,6 @@ impl SystemWorld {
             book: LazyHash::new(fonts.book),
             fonts: fonts.fonts,
             slots: Mutex::new(FxHashMap::default()),
-            now,
         })
     }
 
@@ -429,9 +400,6 @@ impl SystemWorld {
         #[allow(clippy::iter_over_hash_type, reason = "order does not matter")]
         for slot in self.slots.get_mut().values_mut() {
             slot.reset();
-        }
-        if let Now::System(time_lock) = &mut self.now {
-            time_lock.take();
         }
     }
 
@@ -481,26 +449,8 @@ impl World for SystemWorld {
         self.fonts.get(index)?.get()
     }
 
-    fn today(&self, offset: Option<i64>) -> Option<Datetime> {
-        let now = match &self.now {
-            Now::Fixed(time) => time,
-            Now::System(time) => time.get_or_init(Utc::now),
-        };
-
-        // The time with the specified UTC offset, or within the local time zone.
-        let with_offset = match offset {
-            None => now.with_timezone(&Local).fixed_offset(),
-            Some(hours) => {
-                let seconds = i32::try_from(hours).ok()?.checked_mul(3600)?;
-                now.with_timezone(&FixedOffset::east_opt(seconds)?)
-            }
-        };
-
-        Datetime::from_ymd(
-            with_offset.year(),
-            with_offset.month().try_into().ok()?,
-            with_offset.day().try_into().ok()?,
-        )
+    fn today(&self, _offset: Option<i64>) -> Option<Datetime> {
+        None
     }
 }
 
@@ -909,8 +859,6 @@ pub struct CompileConfig {
     pub output_format: OutputFormat,
     /// Which pages to export.
     pub pages: Option<PageRanges>,
-    /// The document's creation date formatted as a UNIX timestamp, with UTC suffix.
-    pub creation_timestamp: Option<DateTime<Utc>>,
     /// Opens the output file with the default viewer or a specific program after
     /// compilation.
     pub open: Option<Option<String>>,
@@ -1075,35 +1023,11 @@ fn export_paged(document: &PagedDocument, config: &CompileConfig) -> SourceResul
     }
 }
 
-/// Convert [`chrono::DateTime`] to [`Datetime`]
-fn convert_datetime<Tz: chrono::TimeZone>(date_time: chrono::DateTime<Tz>) -> Option<Datetime> {
-    Datetime::from_ymd_hms(
-        date_time.year(),
-        date_time.month().try_into().ok()?,
-        date_time.day().try_into().ok()?,
-        date_time.hour().try_into().ok()?,
-        date_time.minute().try_into().ok()?,
-        date_time.second().try_into().ok()?,
-    )
-}
-
 /// Export to a PDF.
 fn export_pdf(document: &PagedDocument, config: &CompileConfig) -> SourceResult<()> {
-    // If the timestamp is provided through the CLI, use UTC suffix,
-    // else, use the current local time and timezone.
-    let timestamp = match config.creation_timestamp {
-        Some(timestamp) => convert_datetime(timestamp).map(Timestamp::new_utc),
-        None => {
-            let local_datetime = chrono::Local::now();
-            convert_datetime(local_datetime).and_then(|datetime| {
-                Timestamp::new_local(datetime, local_datetime.offset().local_minus_utc() / 60)
-            })
-        }
-    };
-
     let options = PdfOptions {
         ident: Smart::Auto,
-        timestamp,
+        timestamp: None,
         page_ranges: config.pages.clone(),
         standards: config.pdf_standards.clone(),
         tagged: config.tagged,
