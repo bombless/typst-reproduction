@@ -99,10 +99,7 @@ impl Renderer {
             package: package,
             creation_timestamp: None,
         };
-        let process_args = ProcessArgs {
-            jobs: None,
-            features: Vec::new(),
-        };
+        let process_args = ProcessArgs { jobs: None };
         Self {
             world: SystemWorld::new(&Input::Stdin, &world_args, &process_args).unwrap(),
         }
@@ -349,7 +346,6 @@ pub struct ProcessArgs {
     /// Number of parallel jobs spawned during compilation. Defaults to number
     /// of CPUs. Setting it to 1 disables parallelism.
     pub jobs: Option<usize>,
-    pub features: Vec<Feature>,
 }
 
 impl SystemWorld {
@@ -408,19 +404,7 @@ impl SystemWorld {
                 .map(|(k, v)| (k.as_str().into(), v.as_str().into_value()))
                 .collect();
 
-            let features = process_args
-                .features
-                .iter()
-                .map(|&feature| match feature {
-                    Feature::Html => typst_library::Feature::Html,
-                    Feature::A11yExtras => typst_library::Feature::A11yExtras,
-                })
-                .collect();
-
-            Library::builder()
-                .with_inputs(inputs)
-                .with_features(features)
-                .build()
+            Library::builder().with_inputs(inputs).build()
         };
 
         let mut fonts = Fonts::searcher();
