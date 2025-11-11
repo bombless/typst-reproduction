@@ -45,7 +45,7 @@ use typst_html::HtmlDocument;
 use typst_library::{Library, model::DocumentInfo};
 use typst_pdf::{PdfOptions, PdfStandards, Timestamp};
 
-use typst_utils::LazyHash;
+use typst_utils::{LazyHash, hash128};
 
 mod gui;
 pub fn main() -> StrResult<()> {
@@ -161,8 +161,29 @@ impl Renderer {
         export_paged(&doc, &config)?;
         Ok(())
     }
-    fn render_from_vec(&self, _: Vec<u8>) -> Frame {
-        unimplemented!()
+    fn render_from_string(&mut self, data: String) -> Frame {
+        let file = FileId::new(None, VirtualPath::new(&PathBuf::new()));
+        let source = Source::new(file, data.clone());
+        let fingerprint = hash128(data.as_bytes());
+        let slot = FileSlot {
+            id: file,
+            source: SlotCell {
+                data: Some(Ok(source)),
+                fingerprint,
+                accessed: true,
+            },
+            file: SlotCell {
+                data: Some(Ok(Bytes::from_string(data))),
+                fingerprint,
+                accessed: true,
+            },
+        };
+        self.world.slots.lock().insert(file, slot);
+        self.world.main = file;
+        // self.world.source = Some(data);
+        let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
+        let doc: PagedDocument = output.unwrap();
+        doc.pages.into_iter().next().unwrap().frame
     }
 }
 pub fn compile<D>(world: &dyn World) -> Warned<SourceResult<D>>
@@ -523,10 +544,12 @@ impl World for SystemWorld {
     }
 
     fn source(&self, id: FileId) -> FileResult<Source> {
+        println!(".source");
         self.slot(id, |slot| slot.source(&self.root))
     }
 
     fn file(&self, id: FileId) -> FileResult<Bytes> {
+        println!(".file");
         self.slot(id, |slot| slot.file(&self.root))
     }
 
@@ -606,6 +629,7 @@ impl FileSlot {
 
     /// Retrieve the source for this file.
     fn source(&mut self, project_root: &Path) -> FileResult<Source> {
+        println!("sourcing {project_root:?}");
         self.source.get_or_init(
             || read(self.id, project_root),
             |data, prev| {
@@ -729,11 +753,13 @@ impl<T: Clone> SlotCell<T> {
         if mem::replace(&mut self.accessed, true)
             && let Some(data) = &self.data
         {
+            println!("return data");
             return data.clone();
         }
 
         // Read and hash the file.
         let result = timed!("loading file", load());
+        println!("slot taken result {result:?}");
         let fingerprint = timed!("hashing file", typst::utils::hash128(&result));
 
         // If the file contents didn't change, yield the old processed data.

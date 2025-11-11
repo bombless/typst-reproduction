@@ -12,6 +12,8 @@ use typst_library::layout::{Frame as TypstFrame, Point};
 use typst_library::text::TextItem;
 use typst_library::visualize::{Geometry::Line, Paint::Solid, Shape as TypstShape};
 
+use std::io::Read;
+
 fn render_text(ui: &mut Ui, text: &TextItem, point: Point, display: bool) {
     // if display {
     //     if !text.glyphs.iter().any(|x| x.c.is_whitespace()) {
@@ -145,9 +147,9 @@ impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         handle_files(ctx);
 
-        if let Some(bytes) = self.bytes.take() {
+        if let Some(bytes) = self.source.take() {
             tracing::debug!("self.renderer.render_from_slice(&bytes);");
-            let page = self.renderer.render_from_vec(bytes);
+            let page = self.renderer.render_from_string(bytes);
             tracing::debug!("render_from_slice done");
             collect_font_from_frame(&mut self.font_definitions, &page);
             ctx.set_fonts(self.font_definitions.clone());
@@ -163,15 +165,18 @@ impl eframe::App for MyApp {
                     bytes: Some(bytes), ..
                 } = file
                 {
-                    self.bytes = Some(bytes.iter().copied().collect());
+                    let source = String::from_utf8(bytes.iter().copied().collect()).unwrap();
+                    self.source = Some(source);
                     tracing::debug!("{} bytes", bytes.len());
                 } else if let DroppedFile {
                     path: Some(path), ..
                 } = file
                 {
-                    let file = std::fs::read(path).unwrap();
-                    println!("{} bytes", file.len());
-                    self.bytes = Some(file);
+                    let mut file = std::fs::File::open(path).unwrap();
+                    let mut source = String::new();
+                    println!("{} bytes", source.len());
+                    file.read_to_string(&mut source).unwrap();
+                    self.source = Some(source);
                 }
             }
         });
@@ -187,7 +192,7 @@ impl eframe::App for MyApp {
                 ui.text_edit_multiline(&mut self.input);
 
                 if ui.button("编译").clicked() {
-                    self.bytes = Some(self.input.as_bytes().into());
+                    self.source = Some(self.input.clone());
                     self.display = true;
                     ctx.request_repaint();
                     return;
