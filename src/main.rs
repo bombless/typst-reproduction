@@ -118,7 +118,7 @@ impl Renderer {
         let doc: PagedDocument = output.unwrap();
         doc.pages.into_iter().next().unwrap().frame
     }
-    fn render_from_path_to_image(&mut self, path: &PathBuf) -> StrResult<()> {
+    fn render_from_path_to_image(&mut self, path: &PathBuf) -> SourceResult<()> {
         self.world.main = FileId::new(None, VirtualPath::new(path));
         let Warned { output, .. } = compile::<PagedDocument>(&mut self.world);
         let doc: PagedDocument = output.unwrap();
@@ -141,8 +141,7 @@ impl Renderer {
             deps_format,
             ppi: 120.0,
         };
-        let format = ImageExportFormat::Png;
-        export_image(&doc, &config, format)?;
+        export_paged(&doc, &config)?;
         Ok(())
     }
     fn render_from_path_to_pdf(&mut self, path: &PathBuf) -> SourceResult<()> {
@@ -168,7 +167,8 @@ impl Renderer {
             deps_format,
             ppi: 32.0,
         };
-        export_pdf(&doc, &config)
+        export_paged(&doc, &config)?;
+        Ok(())
     }
     fn render_from_vec(&self, _: Vec<u8>) -> Frame {
         unimplemented!()
