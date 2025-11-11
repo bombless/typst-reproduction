@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::{
     fmt, fs,
-    io::{self, Read},
+    io::{self, Read, Write},
     mem,
 };
 use typst_library::foundations::{NativeRuleMap, StyleChain};
@@ -24,8 +24,6 @@ use typst_library::text::{Font, FontBook};
 
 use typst_library::foundations::{Bytes, Dict, IntoValue, TargetElem};
 use typst_library::introspection::Introspector;
-
-use std::io::Write;
 
 use ecow::eco_format;
 use rayon::iter::{IntoParallelRefIterator, ParallelIterator};
