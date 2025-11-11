@@ -11,7 +11,7 @@ use std::sync::{LazyLock, OnceLock};
 
 use clap::builder::ValueParser;
 use clap::{ArgAction, Args, Parser, ValueEnum};
-use typst_kit::{download::Downloader, package::PackageStorage};
+
 use typst_library::World;
 use typst_library::engine::{Engine, Route, Sink, Traced};
 use typst_library::routines::Routines;
@@ -234,8 +234,6 @@ pub struct SystemWorld {
     fonts: Vec<FontSlot>,
     /// Maps file ids to source files and buffers.
     slots: Mutex<FxHashMap<FileId, FileSlot>>,
-    /// Holds information about where packages are stored.
-    package_storage: PackageStorage,
     /// The current datetime if requested. This is stored here to ensure it is
     /// always the same within one compilation.
     /// Reset between compilations if not [`Now::Fixed`].
@@ -283,15 +281,6 @@ impl fmt::Display for WorldCreationError {
             WorldCreationError::Io(err) => write!(f, "{err}"),
         }
     }
-}
-
-/// Returns a new package storage for the given args.
-fn storage(args: &PackageArgs) -> PackageStorage {
-    PackageStorage::new(
-        args.package_cache_path.clone(),
-        args.package_path.clone(),
-        Downloader::new(""),
-    )
 }
 
 /// Arguments related to where packages are stored in the system.
@@ -497,7 +486,6 @@ impl SystemWorld {
             book: LazyHash::new(fonts.book),
             fonts: fonts.fonts,
             slots: Mutex::new(FxHashMap::default()),
-            package_storage: storage(&world_args.package),
             now,
         })
     }
